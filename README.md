@@ -1,74 +1,105 @@
-# PSX Ledger
+# PSX Terminal
 
-A Next.js app for looking up historical price, volume, dividend and financial-highlight
-data for companies listed on the Pakistan Stock Exchange (PSX).
+A Next.js app for analysing companies listed on the Pakistan Stock Exchange: historical
+prices, income statement / balance sheet / cash flow, derived ratios and payout history,
+in one view per company.
 
-- **Framework:** Next.js 16 (App Router, TypeScript), Tailwind v4
+- **Framework:** Next.js 16 (App Router, Turbopack, TypeScript), Tailwind v4
 - **UI:** hand-built shadcn-style primitives (Button, Card, Badge, Table, Tabs, Input,
-  Skeleton) + a shadcn-style chart wrapper over Recharts
-- **Primary data source:** PSX's own Data Portal, `dps.psx.com.pk`
-- **Secondary data source:** `khistocks.com` (dividends & financial highlights only)
+  Select, Toggle Group, Command palette, Skeleton) plus a shadcn-style chart wrapper
+  over Recharts
+- **Price & profile data:** the PSX Data Portal, `dps.psx.com.pk`
+- **Financial statements & payouts:** `khistocks.com`
+
+## Pages
+
+| Route | What it shows |
+| --- | --- |
+| `/` | Market breadth, top gainers / losers / most active, sector index, symbol search |
+| `/stock/[symbol]` | Quote header plus tabs: Overview, Financials, Ratios, Dividends, Price history, Profile |
+| `/screener` | The whole market-watch board, sortable by any column and filterable by sector |
+| `/sectors`, `/sectors/[sector]` | Sector directory and the companies in each sector |
+
+JSON endpoints behind the same data layer: `/api/symbols`, `/api/market`,
+`/api/stock/[symbol]/history`, `/api/stock/[symbol]/financials`,
+`/api/stock/[symbol]/dividends`.
 
 ## How the data layer works
 
+Neither source publishes an API, so both are scraped. Scrapers live in `lib/psx/` and
+`lib/khistocks/` and are the only code that knows about raw HTML; everything above them
+works with the normalised types in `lib/data/types.ts`. `lib/data/snapshot.ts` fetches
+every source in parallel and assembles one `StockSnapshot`, recording a `SourceNote` per
+source so the UI can always say where a figure came from.
+
 ### PSX (`lib/psx/`)
 
-`dps.psx.com.pk` has no official public API. Two endpoints are used here, verified
-against the request/response shapes used by the open-source `psx-data-reader` Python
-package (the most reliable reference available for this site):
+Endpoints are listed in `lib/psx/endpoints.ts`; shapes were taken from the portal's own
+front-end traffic and the open-source `psx-data-reader` package.
 
-- `GET /symbols` — the full list of listed symbols, names and sectors. Used to power
-  search and to show the company name/sector on a stock's page.
-- `POST /historical` with form fields `{ symbol, month, year }` — returns a
-  server-rendered HTML table of daily OHLCV bars for that single month. There is no
-  native date-range query, so `lib/psx/historical.ts` issues one request per month in
-  the requested range (batched 6-at-a-time) and merges the results. Each month is
-  cached independently (`unstable_cache`, 6h revalidate) so overlapping ranges reuse
-  work instead of re-scraping.
+- `GET /symbols` — the full symbol directory (search, sector grid, company names).
+- `POST /historical` with `{ symbol, month, year }` — one month of daily OHLCV as an HTML
+  table. There's no date-range query, so `lib/psx/historical.ts` issues one request per
+  month in the range (six in flight at a time) and merges them. Each month is cached
+  independently, so overlapping ranges reuse work.
+- `GET /timeseries/eod/{symbol}` — fallback close/volume series when the per-month scrape
+  comes back empty. No OHLC, so those columns are filled from the close.
+- `GET /company/{symbol}` — profile fields and the payout table.
+- `GET /market-watch` — the whole board, used by the dashboard and screener.
 
-There's no separate "live quote" endpoint wired up, because PSX doesn't expose one
-with a documented, stable shape. Instead, `lib/psx/stats.ts` derives the current
-snapshot (last close, day change, day range, period high/low, average volume) from the
-most recent bar(s) already loaded. This is accurate for end-of-day analysis but is
-**not** a real-time streaming quote.
+There's no live-quote endpoint with a documented, stable shape, so the "current" snapshot
+is the most recent close plus whatever the market-watch board reports. **These are
+end-of-day figures, not a streaming quote** — the UI says so.
 
 ### khistocks.com (`lib/khistocks/`)
 
-khistocks.com doesn't publish an API either, and unlike PSX's `/historical` endpoint,
-several of its pages render tables via client-side AJAX rather than static server HTML
-— meaning a plain server-side fetch can't always see the data. `lib/khistocks/scrape.ts`
-is a best-effort scraper: it tries a few common query-param names (`symbol`, `scrip`,
-`company`, `code`) against the dividend-data and financial-highlights pages and parses
-whatever `<table>` elements it can find. **Treat this as a bonus, not a guarantee** —
-for some symbols it will come back empty, and the UI is designed to say so plainly
-rather than show a broken table. If you want to make this more reliable, the fastest
-path is to open the relevant khistocks.com page in a browser, inspect the Network tab
-for the actual AJAX request it fires, and swap that into `lib/khistocks/scrape.ts`.
+khistocks has no API and no stable per-symbol URL scheme, so `client.ts` tries a list of
+candidate URL patterns per page kind and keeps the first that returns real tables. If the
+site changes, add the new pattern there rather than touching the parsers.
+
+Statements are parsed by **shape, not selectors**: `parse.ts` turns any label-per-row /
+period-per-column table into a grid, parsing headers like `FY2024`, `Jun-24`, `31-Dec-2023`
+or `Q3 2025` into a common period type, then `financials.ts` identifies which grid is the
+income statement, balance sheet and cash-flow statement by scoring the line items each one
+contains. Row labels are matched by substring (`LINE_ITEMS` in `parse.ts`) so "net sales",
+"turnover" and "revenue" all land in the same normalised field. Figures printed as
+`Rs '000` or `Rs mn` are scaled to absolute rupees, and `(1,234)` is read as negative.
+
+Ratios are **derived** from the parsed statements rather than scraped, so every number on
+the Ratios tab is reproducible from the figures on the Financials tab.
+
+### When a source is unreachable
+
+Each source fails independently — a company whose financials can't be fetched still gets
+its price history. When a source fails entirely, the app falls back to the deterministic
+dataset in `lib/data/sample.ts` and says so: an amber banner at the top of the page, and a
+per-source panel at the bottom listing every endpoint tried and why it failed. Sample data
+is generated from a fixed seed; it is realistic in shape but is **not real market data**.
 
 ## ⚠️ Data-use terms
 
-PSX's own terms for `dps.psx.com.pk` restrict market data to personal, non-commercial
-use — no redistribution, resale, or commercial dissemination of the feed. This project
-is built for personal/educational analysis on that basis. If you plan to use this for
-anything beyond that, review PSX's terms of use on their site first, and check
-khistocks.com's terms as well.
+PSX's terms for `dps.psx.com.pk` restrict market data to personal, non-commercial use — no
+redistribution, resale or commercial dissemination. This project is built for
+personal/educational analysis on that basis. Review PSX's terms of use, and khistocks.com's,
+before using this for anything beyond that. Nothing here is investment advice.
 
 ## Project structure
 
 ```
 app/
-  page.tsx                        Landing page (search + featured symbols)
-  stock/[symbol]/page.tsx         Stock detail page (server component)
-  api/symbols/route.ts            GET full symbol directory
-  api/stock/[symbol]/history/     GET OHLCV bars for a range
-  api/stock/[symbol]/extras/      GET khistocks dividends + financial highlights
+  page.tsx                          Dashboard
+  stock/[symbol]/page.tsx           Company page (server component)
+  screener/page.tsx                 Whole-board screener
+  sectors/, sectors/[sector]/       Sector directory
+  api/…                             JSON endpoints over the same data layer
 components/
-  ui/                             Hand-built shadcn-style primitives
-  stock/                          Search, charts, tables, stat cards, tabs
-  site-header.tsx
+  ui/                               shadcn-style primitives + chart wrapper
+  stock/                            Quote header, charts, statement tables, sources panel
+  market/                           Breadth, movers, screener table
 lib/
-  psx/                            symbols.ts, historical.ts, stats.ts, types.ts
-  khistocks/                      scrape.ts, dividends.ts, financials.ts
+  data/      types.ts, http.ts, html.ts, snapshot.ts, sample.ts
+  psx/       endpoints.ts, symbols.ts, historical.ts, company.ts, market.ts, stats.ts
+  khistocks/ client.ts, parse.ts, financials.ts, dividends.ts
   format.ts, utils.ts
 ```
 
@@ -79,43 +110,45 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. Note that the PSX/khistocks scrapers need real outbound
-network access to `dps.psx.com.pk` and `khistocks.com` — if you're developing behind a
-restrictive proxy/firewall, those requests will fail.
+Open http://localhost:3000. The scrapers need outbound access to `dps.psx.com.pk` and
+`khistocks.com`; behind a restrictive proxy or firewall those requests fail and the app
+falls back to sample data (clearly flagged).
 
 ## Deploying to Vercel
 
-1. Push this project to your GitHub repo (see below).
-2. In Vercel, **Add New → Project**, import the repo. Framework preset "Next.js" is
-   auto-detected — no environment variables are required.
-3. Deploy. The two data API routes (`.../history` and `.../extras`) are configured
-   with `maxDuration` (60s and 30s) since scraping several months of PSX data in one
-   request can take a little while — on Vercel's Hobby plan this works out of the box;
-   confirm your plan's function-duration limits if you extend the range options.
+1. Push this repo to GitHub.
+2. In Vercel, **Add New → Project** and import it. The "Next.js" preset is auto-detected;
+   no environment variables are required.
+3. Deploy. The history route sets `maxDuration = 60` because a 5Y pull is sixty month
+   requests against PSX; the other data routes set 30. That works on Hobby — check your
+   plan's function limits if you widen the range options.
 
-### Pushing this project to `hamzawasim07/StockAnalysis`
+## Verifying the scrapers against live sites
 
-This was built in a sandboxed environment without push access to your GitHub account,
-so from your machine:
+This was built in a sandbox whose egress policy blocks both upstream hosts, so the
+parsers are written defensively against documented/observed response shapes but have
+**not** been run against live HTML. Once deployed somewhere with open egress, the fastest
+way to confirm each source is to hit the JSON endpoints and read the `notes` array:
 
 ```bash
-git clone https://github.com/hamzawasim07/StockAnalysis.git
-# copy this project's files into that folder (replacing the placeholder README), then:
-cd StockAnalysis
-git add .
-git commit -m "Initial PSX Ledger app"
-git push origin main
+curl -s https://<your-deployment>/api/symbols | head
+curl -s "https://<your-deployment>/api/stock/LUCK/history?range=1M" | jq '.notes, (.bars|length)'
+curl -s https://<your-deployment>/api/stock/LUCK/financials | jq '.notes, (.income|length)'
 ```
 
-## Known limitations / ideas for v2
+A note with `"source": "sample"` means that source did not parse; the accompanying
+message names the endpoint and the failure. For khistocks, the message lists which URL
+patterns were tried — open the real page in a browser, check the Network tab for the URL
+(and whether the table is rendered server-side or by AJAX), and add the working pattern to
+`CANDIDATES` in `lib/khistocks/client.ts`.
 
-- Historical range is capped at 5Y in the UI; PSX's per-month scraping means longer
-  ranges cost more requests — raise `HistoryRangeKey` in `lib/psx/types.ts` if you need
-  more, and consider raising `maxDuration` accordingly.
-- No true intraday/live quotes (see above) — could be added via `dps.psx.com.pk`'s
-  market-watch page if you verify its response shape.
-- khistocks integration is best-effort by design; a browser-based scrape (e.g. a
-  headless-browser scraping service) would be needed for full reliability against its
-  AJAX-rendered pages.
-- No persistence/database — every request re-fetches (subject to caching), so there's
-  no historical snapshot of your own beyond PSX's own history.
+## Known limitations / ideas next
+
+- No true intraday or live quotes — see above.
+- khistocks pages that render tables via client-side AJAX can't be read by a plain server
+  fetch; those would need a headless-browser fetch step.
+- History is capped at 10Y (`MAX`) because PSX's per-month scraping makes longer ranges
+  expensive; raise `RANGE_MONTHS` in `lib/data/types.ts` and `maxDuration` together.
+- No database — every request re-fetches, subject to the Next.js data cache.
+- Quarterly statements are parsed if a source publishes them, but neither source is
+  currently known to expose a quarterly page; the tabs show annual periods today.
