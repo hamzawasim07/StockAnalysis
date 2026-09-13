@@ -112,11 +112,11 @@ export async function GET(request: Request) {
 
   // khistocks — every candidate URL, since the working pattern is what we're after.
   const khistocksUrls = [
-    `https://www.khistocks.com/financial-statements/${symbol}.html`,
-    `https://www.khistocks.com/company/financials/${symbol}`,
-    `https://www.khistocks.com/financial-highlights.html?symbol=${symbol}`,
-    `https://www.khistocks.com/dividend-data/${symbol}.html`,
-    `https://www.khistocks.com/dividend-data.html?symbol=${symbol}`,
+    `https://www.khistocks.com/company-information/financial-highlights/${symbol}.html`,
+    `https://www.khistocks.com/company-information/company-profile/${symbol}.html`,
+    `https://www.khistocks.com/company-information/dividend-data.html`,
+    `https://www.khistocks.com/market-live/companies-live/detailed-view/${symbol}.html`,
+    `https://www.khistocks.com/company/getcompinfo/${symbol}`,
     `https://www.khistocks.com/`,
   ];
 

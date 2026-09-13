@@ -53,8 +53,22 @@ end-of-day figures, not a streaming quote** — the UI says so.
 
 ### khistocks.com (`lib/khistocks/`)
 
-khistocks has no API and no documented per-symbol URL scheme, so rather than guessing
-URLs, `discover.ts` crawls the site's own navigation: it fetches a few entry pages,
+khistocks has no API. Its URL scheme is:
+
+```
+/company-information/financial-highlights/{SYMBOL}.html   statements
+/company-information/company-profile/{SYMBOL}.html        profile
+/company-information/dividend-data.html                   payouts, all companies on one page
+/market-live/companies-live/detailed-view/{SYMBOL}.html   live quote
+/company/getcompinfo/{SYMBOL}                             company info endpoint
+```
+
+Every page is also served under an `/index.php` prefix and on the apex domain; both are
+tried as fallbacks. Because the payout page covers every listed company at once, the
+dividend parser filters rows to the requested symbol (matching the ticker as a whole
+token, so `LUCKY`'s payouts are never attributed to `LUCK`).
+
+The scheme can still change, so `discover.ts` crawls the site's own navigation as well: it fetches a few entry pages,
 collects every link, and scores the ones whose path or text names the symbol *and* look
 like a financials, payouts or profile page. Whatever the real scheme is, the site links to
 it. A company page is followed one level deeper to pick up its statement and payout links.

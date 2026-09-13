@@ -28,8 +28,14 @@ function toIso(raw: string | undefined): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
 }
 
-export function parseDividendTables(html: string): Dividend[] {
+/**
+ * khistocks publishes payouts on one page covering every listed company, so when a
+ * symbol column is present the rows are filtered to `symbol`. Per-company pages have
+ * no such column, in which case every row belongs to the company already.
+ */
+export function parseDividendTables(html: string, symbol?: string): Dividend[] {
   const out: Dividend[] = [];
+  const target = symbol?.trim().toUpperCase();
 
   for (const table of parseTables(html)) {
     const headers = table.headers.map((header) => header.toLowerCase());
@@ -41,6 +47,7 @@ export function parseDividendTables(html: string): Dividend[] {
     const indexOf = (...terms: string[]) =>
       headers.findIndex((header) => terms.some((term) => header.includes(term)));
     const columns = {
+      symbol: indexOf("symbol", "scrip", "company", "name"),
       announced: indexOf("announce", "declar", "date"),
       period: indexOf("period", "year", "quarter"),
       type: indexOf("type", "nature", "payout"),
@@ -54,6 +61,13 @@ export function parseDividendTables(html: string): Dividend[] {
     const at = (row: string[], index: number) => (index >= 0 ? (row[index] ?? "") : "");
 
     for (const row of table.rows) {
+      if (target && columns.symbol >= 0) {
+        const rowSymbol = at(row, columns.symbol).trim().toUpperCase();
+        // Match the ticker exactly, or a company-name cell that names it.
+        if (rowSymbol !== target && !new RegExp(`(^|[^A-Z0-9])${target}([^A-Z0-9]|$)`).test(rowSymbol)) {
+          continue;
+        }
+      }
       const announcedOn = toIso(at(row, columns.announced) || row[0]);
       const typeText = at(row, columns.type) || row.join(" ");
       const percent = parseLooseNumber(at(row, columns.percent));
@@ -90,7 +104,7 @@ const loadDividends = unstable_cache(
     }
 
     const endpoint = page.url.replace(/^https?:\/\//, "");
-    const dividends = parseDividendTables(page.html);
+    const dividends = parseDividendTables(page.html, symbol);
     if (dividends.length === 0) {
       throw new UpstreamError(`${endpoint} reached, but no payout table was recognised`);
     }

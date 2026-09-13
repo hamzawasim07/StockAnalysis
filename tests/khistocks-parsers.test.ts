@@ -5,7 +5,7 @@ import { deriveRatios } from "@/lib/data/ratios";
 import { parseDividendTables } from "@/lib/khistocks/dividends";
 import { scoreLinks } from "@/lib/khistocks/discover";
 import { detectUnits, parsePeriodHeader, readRow, toStatementGrid, LINE_ITEMS } from "@/lib/khistocks/parse";
-import { DIVIDENDS_PAGE, FINANCIALS_PAGE, INDEX_PAGE } from "./fixtures/khistocks";
+import { DIVIDENDS_ALL_COMPANIES, DIVIDENDS_PAGE, FINANCIALS_PAGE, INDEX_PAGE } from "./fixtures/khistocks";
 
 describe("period headers", () => {
   it("reads the formats PSX filings use", () => {
@@ -79,6 +79,29 @@ describe("dividend tables", () => {
 
   it("captures book-closure dates", () => {
     expect(dividends[0]).toMatchObject({ bookClosureFrom: "2025-09-24", bookClosureTo: "2025-09-28" });
+  });
+});
+
+describe("shared all-companies dividend page", () => {
+  it("keeps only the rows for the requested symbol", () => {
+    const luck = parseDividendTables(DIVIDENDS_ALL_COMPANIES, "LUCK");
+    expect(luck).toHaveLength(2);
+    expect(luck.map((item) => item.percent)).toEqual([160, 120]);
+  });
+
+  it("does not match a different symbol that merely starts the same", () => {
+    // LUCKY's payout must not be attributed to LUCK.
+    const luck = parseDividendTables(DIVIDENDS_ALL_COMPANIES, "LUCK");
+    expect(luck.some((item) => item.percent === 40)).toBe(false);
+  });
+
+  it("is case-insensitive about the requested symbol", () => {
+    expect(parseDividendTables(DIVIDENDS_ALL_COMPANIES, "luck")).toHaveLength(2);
+  });
+
+  it("keeps every row when no symbol column exists", () => {
+    // A per-company page has no symbol column; all rows already belong to it.
+    expect(parseDividendTables(DIVIDENDS_PAGE, "LUCK")).toHaveLength(3);
   });
 });
 

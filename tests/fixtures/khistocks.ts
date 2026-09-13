@@ -96,3 +96,24 @@ export const INDEX_PAGE = `
     <li><a href="/company/LUCKY-STAR">Lucky Star Textiles</a></li>
   </ul>
 </body></html>`;
+
+/**
+ * khistocks publishes payouts for every listed company on one page, so the parser
+ * has to pick out the rows belonging to the symbol being viewed.
+ */
+export const DIVIDENDS_ALL_COMPANIES = `
+<html><body>
+  <h3>Dividend History (%)</h3>
+  <table>
+    <thead>
+      <tr><th>Symbol</th><th>Announced</th><th>Period</th><th>Type</th><th>Rate %</th><th>BC From</th><th>BC To</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>LUCK</td><td>2025-09-18</td><td>Q4 2025</td><td>Cash Dividend</td><td>160%</td><td>2025-09-24</td><td>2025-09-28</td></tr>
+      <tr><td>DGKC</td><td>2025-09-17</td><td>Q4 2025</td><td>Cash Dividend</td><td>25%</td><td>2025-09-23</td><td>2025-09-27</td></tr>
+      <tr><td>LUCK</td><td>2024-09-19</td><td>Q4 2024</td><td>Cash Dividend</td><td>120%</td><td>2024-09-25</td><td>2024-09-29</td></tr>
+      <tr><td>LUCKY</td><td>2024-08-01</td><td>Q3 2024</td><td>Cash Dividend</td><td>40%</td><td>2024-08-07</td><td>2024-08-11</td></tr>
+      <tr><td>MLCF</td><td>2024-09-12</td><td>Q4 2024</td><td>Bonus Shares</td><td>10%</td><td>2024-09-18</td><td>2024-09-22</td></tr>
+    </tbody>
+  </table>
+</body></html>`;

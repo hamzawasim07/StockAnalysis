@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseHistoricalHtml } from "@/lib/psx/historical";
+import { parseEodPayload, parseHistoricalHtml } from "@/lib/psx/historical";
 import { parseMarketWatchHtml } from "@/lib/psx/market";
 import { quoteFromBars, statsFromBars } from "@/lib/psx/stats";
 import { HISTORICAL_TABLE, HISTORICAL_WITH_CHANGE, MARKET_WATCH } from "./fixtures/psx";
@@ -72,5 +72,48 @@ describe("derived price statistics", () => {
     const stats = statsFromBars([]);
     expect(stats.periodHigh).toBeNull();
     expect(stats.averageVolume).toBeNull();
+  });
+});
+
+describe("PSX EOD timeseries", () => {
+  it("reads the positional row form", () => {
+    const bars = parseEodPayload({
+      status: 1,
+      data: [
+        [1757548800, 992.15, 395500],
+        [1757462400, 970.5, 288140],
+      ],
+    });
+    expect(bars).toHaveLength(2);
+    expect(bars.at(-1)).toMatchObject({ close: 992.15, volume: 395500 });
+    // No OHLC on this endpoint, so the close stands in for all four.
+    expect(bars.at(-1)!.open).toBe(bars.at(-1)!.close);
+  });
+
+  it("reads an object row form and ISO dates", () => {
+    const bars = parseEodPayload({
+      data: [{ date: "2026-09-11", close: 992.15, volume: 395500 }],
+    });
+    expect(bars[0]).toMatchObject({ date: "2026-09-11", close: 992.15 });
+  });
+
+  it("accepts millisecond timestamps", () => {
+    // Same instant as 1757548800 seconds, so both forms must agree.
+    const seconds = parseEodPayload({ data: [[1757548800, 100, 5]] });
+    const millis = parseEodPayload({ data: [[1757548800000, 100, 5]] });
+    expect(millis[0].date).toBe(seconds[0].date);
+    expect(millis[0].date).toBe("2025-09-11");
+  });
+
+  it("drops unusable rows instead of emitting NaN bars", () => {
+    const bars = parseEodPayload({
+      data: [["not-a-date", "not-a-price"], null, [1757548800, 992.15, 395500]],
+    });
+    expect(bars).toHaveLength(1);
+  });
+
+  it("returns an empty series when the payload shape changes", () => {
+    expect(parseEodPayload({} as never)).toEqual([]);
+    expect(parseEodPayload({ data: undefined })).toEqual([]);
   });
 });

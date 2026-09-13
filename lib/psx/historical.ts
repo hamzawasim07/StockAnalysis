@@ -99,9 +99,57 @@ const loadMonth = unstable_cache(
   { revalidate: PSX_TTL.history },
 );
 
+/**
+ * The EOD endpoint returns JSON, but the row shape isn't documented. Both the
+ * positional form ([timestamp, close, volume]) and an object form are accepted so a
+ * change on their side degrades to a parse miss rather than a crash.
+ */
 interface EodResponse {
   status?: number;
-  data?: [number, number, number][];
+  data?: unknown[];
+}
+
+interface EodRow {
+  date: string;
+  close: number;
+  volume: number;
+}
+
+function readEodRow(row: unknown): EodRow | null {
+  let timestamp: unknown;
+  let close: unknown;
+  let volume: unknown;
+
+  if (Array.isArray(row)) {
+    [timestamp, close, volume] = row;
+  } else if (row && typeof row === "object") {
+    const record = row as Record<string, unknown>;
+    timestamp = record.date ?? record.time ?? record.timestamp ?? record.t;
+    close = record.close ?? record.price ?? record.c;
+    volume = record.volume ?? record.vol ?? record.v;
+  } else {
+    return null;
+  }
+
+  if (typeof close !== "number" || !Number.isFinite(close)) return null;
+
+  // Timestamps come back in seconds; anything already in milliseconds or an ISO
+  // string is handled too.
+  let date: Date;
+  if (typeof timestamp === "number") {
+    date = new Date(timestamp > 1e11 ? timestamp : timestamp * 1000);
+  } else if (typeof timestamp === "string") {
+    date = new Date(timestamp);
+  } else {
+    return null;
+  }
+  if (Number.isNaN(date.getTime())) return null;
+
+  return {
+    date: date.toISOString().slice(0, 10),
+    close,
+    volume: typeof volume === "number" && Number.isFinite(volume) ? volume : 0,
+  };
 }
 
 /**
@@ -109,29 +157,32 @@ interface EodResponse {
  * open/high/low, so those are filled from the close and the table marks them as
  * approximate.
  */
+export function parseEodPayload(payload: EodResponse): Bar[] {
+  if (!Array.isArray(payload?.data)) return [];
+  return dedupeBars(
+    payload.data
+      .map((row): Bar | null => {
+        const parsed = readEodRow(row);
+        if (!parsed) return null;
+        return {
+          date: parsed.date,
+          open: parsed.close,
+          high: parsed.close,
+          low: parsed.close,
+          close: parsed.close,
+          volume: parsed.volume,
+        };
+      })
+      .filter((bar): bar is Bar => bar !== null),
+  );
+}
+
 async function loadEodSeries(symbol: string): Promise<Bar[]> {
   const payload = await fetchJson<EodResponse>(PSX_ENDPOINTS.eod(symbol), {
     revalidate: PSX_TTL.history,
     tags: [`psx-history-${symbol}`],
   });
-  if (!Array.isArray(payload?.data)) return [];
-
-  return dedupeBars(
-    payload.data
-      .map(([timestamp, close, volume]) => {
-        const date = new Date(timestamp * 1000);
-        if (Number.isNaN(date.getTime()) || !Number.isFinite(close)) return null;
-        return {
-          date: date.toISOString().slice(0, 10),
-          open: close,
-          high: close,
-          low: close,
-          close,
-          volume: Number.isFinite(volume) ? volume : 0,
-        } satisfies Bar;
-      })
-      .filter((bar): bar is Bar => bar !== null),
-  );
+  return parseEodPayload(payload);
 }
 
 /** The (year, month) pairs covering the last `months` months, oldest first. */

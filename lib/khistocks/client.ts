@@ -23,28 +23,39 @@ export type { PageKind } from "./discover";
 
 import type { PageKind } from "./discover";
 
+/**
+ * khistocks.com's real URL scheme, confirmed against the site's own indexed pages:
+ *
+ *   /company-information/financial-highlights/{SYMBOL}.html   statements
+ *   /company-information/company-profile/{SYMBOL}.html        profile
+ *   /company-information/dividend-data.html                   payouts (one shared page)
+ *   /market-live/companies-live/detailed-view/{SYMBOL}.html   live quote
+ *   /company/getcompinfo/{SYMBOL}                             company info endpoint
+ *
+ * The site also serves every page under an `/index.php` prefix and on the apex
+ * domain, so both are listed as fallbacks. Link discovery still runs first and
+ * takes priority — these are the known-good starting points.
+ */
+const HOSTS = ["https://www.khistocks.com", "https://khistocks.com"];
+
+/** Every host, with and without the index.php prefix. */
+function variants(path: string): string[] {
+  return HOSTS.flatMap((host) => [`${host}${path}`, `${host}/index.php${path}`]);
+}
+
 const CANDIDATES: Record<PageKind, (symbol: string) => string[]> = {
-  financials: (symbol) => [
-    `${KHISTOCKS_BASE}/financial-statements/${symbol}.html`,
-    `${KHISTOCKS_BASE}/company/financials/${symbol}`,
-    `${KHISTOCKS_BASE}/financial-highlights.html?symbol=${symbol}`,
-    `${KHISTOCKS_BASE}/financial-highlights.php?symbol=${symbol}`,
-    `${KHISTOCKS_BASE}/financials?scrip=${symbol}`,
-  ],
-  ratios: (symbol) => [
-    `${KHISTOCKS_BASE}/financial-ratios/${symbol}.html`,
-    `${KHISTOCKS_BASE}/ratios.html?symbol=${symbol}`,
-    `${KHISTOCKS_BASE}/ratios?scrip=${symbol}`,
-  ],
-  dividends: (symbol) => [
-    `${KHISTOCKS_BASE}/dividend-data/${symbol}.html`,
-    `${KHISTOCKS_BASE}/dividend-data.html?symbol=${symbol}`,
-    `${KHISTOCKS_BASE}/dividends?scrip=${symbol}`,
-    `${KHISTOCKS_BASE}/payouts.php?symbol=${symbol}`,
+  financials: (symbol) => variants(`/company-information/financial-highlights/${symbol}.html`),
+  // Ratios live on the same financial-highlights page.
+  ratios: (symbol) => variants(`/company-information/financial-highlights/${symbol}.html`),
+  dividends: () => [
+    // One page carries every company's payout history, so it is fetched whole and
+    // filtered by symbol during parsing.
+    ...variants("/company-information/dividend-data.html"),
   ],
   profile: (symbol) => [
-    `${KHISTOCKS_BASE}/company-profile/${symbol}.html`,
-    `${KHISTOCKS_BASE}/company.html?symbol=${symbol}`,
+    ...variants(`/company-information/company-profile/${symbol}.html`),
+    ...variants(`/market-live/companies-live/detailed-view/${symbol}.html`),
+    `https://www.khistocks.com/company/getcompinfo/${symbol}`,
   ],
 };
 
