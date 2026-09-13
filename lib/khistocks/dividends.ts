@@ -3,8 +3,8 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { parseTables } from "@/lib/data/html";
-import { note } from "@/lib/data/http";
-import type { Dividend, DividendKind, SourceNote, Sourced } from "@/lib/data/types";
+import { errorMessage, note, UpstreamError } from "@/lib/data/http";
+import type { Dividend, DividendKind, Sourced } from "@/lib/data/types";
 import { parseLooseNumber } from "@/lib/format";
 import { normalizeSymbol } from "@/lib/utils";
 
@@ -76,28 +76,42 @@ export function parseDividendTables(html: string): Dividend[] {
   return out.sort((a, b) => (b.announcedOn ?? "").localeCompare(a.announcedOn ?? ""));
 }
 
-const loadDividends = unstable_cache(
-  async (symbol: string): Promise<Sourced<Dividend[]>> => {
-    const notes: SourceNote[] = [];
-    const page = await fetchKhistocksPage("dividends", symbol);
+interface ParsedDividends {
+  dividends: Dividend[];
+  endpoint: string;
+}
 
-    if (page.html && page.url) {
-      const dividends = parseDividendTables(page.html);
-      if (dividends.length > 0) {
-        notes.push(note("khistocks", page.url.replace(/^https?:\/\//, ""), true, `${dividends.length} payouts`));
-        return { data: dividends, notes };
-      }
-      notes.push(note("khistocks", page.url.replace(/^https?:\/\//, ""), false, "page reached, no payout table recognised"));
-    } else {
-      notes.push(note("khistocks", "khistocks.com", false, summariseAttempts(page.attempts)));
+/** Throws when no payout table was recognised, so a failure is never cached. */
+const loadDividends = unstable_cache(
+  async (symbol: string): Promise<ParsedDividends> => {
+    const page = await fetchKhistocksPage("dividends", symbol);
+    if (!page.html || !page.url) {
+      throw new UpstreamError(summariseAttempts(page.attempts));
     }
 
-    return { data: [], notes };
+    const endpoint = page.url.replace(/^https?:\/\//, "");
+    const dividends = parseDividendTables(page.html);
+    if (dividends.length === 0) {
+      throw new UpstreamError(`${endpoint} reached, but no payout table was recognised`);
+    }
+    return { dividends, endpoint };
   },
   ["khistocks-dividends-v1"],
   { revalidate: KHISTOCKS_TTL.dividends },
 );
 
-export async function getKhistocksDividends(symbol: string) {
-  return loadDividends(normalizeSymbol(symbol));
+export async function getKhistocksDividends(symbolInput: string): Promise<Sourced<Dividend[]>> {
+  const symbol = normalizeSymbol(symbolInput);
+  try {
+    const result = await loadDividends(symbol);
+    return {
+      data: result.dividends,
+      notes: [note("khistocks", result.endpoint, true, `${result.dividends.length} payouts`)],
+    };
+  } catch (error) {
+    return {
+      data: [],
+      notes: [note("khistocks", "khistocks.com", false, errorMessage(error))],
+    };
+  }
 }

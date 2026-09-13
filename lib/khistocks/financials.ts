@@ -3,7 +3,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { parseTables } from "@/lib/data/html";
-import { note } from "@/lib/data/http";
+import { errorMessage, note, UpstreamError } from "@/lib/data/http";
 import { sampleFinancials } from "@/lib/data/sample";
 import type {
   BalanceSheet,
@@ -12,7 +12,6 @@ import type {
   IncomeStatement,
   PeriodRef,
   Ratios,
-  SourceNote,
   Sourced,
 } from "@/lib/data/types";
 import { normalizeSymbol } from "@/lib/utils";
@@ -187,55 +186,74 @@ const INCOME_MARKERS = [LINE_ITEMS.revenue, LINE_ITEMS.netProfit, LINE_ITEMS.gro
 const BALANCE_MARKERS = [LINE_ITEMS.totalAssets, LINE_ITEMS.totalEquity, LINE_ITEMS.currentAssets, LINE_ITEMS.shareCapital];
 const CASHFLOW_MARKERS = [LINE_ITEMS.operating, LINE_ITEMS.investing, LINE_ITEMS.financing];
 
+interface ParsedFinancials {
+  financials: Financials;
+  endpoint: string;
+  summary: string;
+}
+
+/**
+ * Throws when nothing usable was parsed, so a failure is never cached — the sample
+ * statements are substituted outside the cache instead.
+ */
 const loadFinancials = unstable_cache(
-  async (symbol: string): Promise<Sourced<Financials>> => {
-    const notes: SourceNote[] = [];
+  async (symbol: string): Promise<ParsedFinancials> => {
     const page = await fetchKhistocksPage("financials", symbol);
-
-    if (page.html && page.url) {
-      const grids = parseTables(page.html)
-        .map(toStatementGrid)
-        .filter((grid): grid is StatementGrid => grid !== null);
-
-      const incomeGrid = bestGrid(grids, INCOME_MARKERS);
-      const balanceGrid = bestGrid(grids, BALANCE_MARKERS);
-      const cashGrid = bestGrid(grids, CASHFLOW_MARKERS);
-
-      const income = incomeGrid ? buildIncome(incomeGrid) : [];
-      const balance = balanceGrid ? buildBalance(balanceGrid) : [];
-      const cashFlow = cashGrid ? buildCashFlow(cashGrid) : [];
-
-      if (income.length > 0 || balance.length > 0) {
-        notes.push(
-          note("khistocks", page.url.replace(/^https?:\/\//, ""), true,
-            `${income.length} income / ${balance.length} balance / ${cashFlow.length} cash-flow periods`),
-        );
-        const unit = incomeGrid ?? balanceGrid ?? cashGrid;
-        return {
-          data: {
-            currency: "PKR",
-            unitScale: unit?.unitScale ?? 1,
-            unitLabel: "PKR",
-            income,
-            balance,
-            cashFlow,
-            ratios: deriveRatios(income, balance),
-          },
-          notes,
-        };
-      }
-      notes.push(note("khistocks", page.url.replace(/^https?:\/\//, ""), false, "page reached, no statement tables recognised"));
-    } else {
-      notes.push(note("khistocks", "khistocks.com", false, summariseAttempts(page.attempts)));
+    if (!page.html || !page.url) {
+      throw new UpstreamError(summariseAttempts(page.attempts));
     }
 
-    notes.push(note("sample", "bundled statements", true, "khistocks unreachable — showing generated sample financials"));
-    return { data: sampleFinancials(symbol), notes };
+    const grids = parseTables(page.html)
+      .map(toStatementGrid)
+      .filter((grid): grid is StatementGrid => grid !== null);
+
+    const incomeGrid = bestGrid(grids, INCOME_MARKERS);
+    const balanceGrid = bestGrid(grids, BALANCE_MARKERS);
+    const cashGrid = bestGrid(grids, CASHFLOW_MARKERS);
+
+    const income = incomeGrid ? buildIncome(incomeGrid) : [];
+    const balance = balanceGrid ? buildBalance(balanceGrid) : [];
+    const cashFlow = cashGrid ? buildCashFlow(cashGrid) : [];
+
+    const endpoint = page.url.replace(/^https?:\/\//, "");
+    if (income.length === 0 && balance.length === 0) {
+      throw new UpstreamError(`${endpoint} reached, but no statement tables were recognised`);
+    }
+
+    const unit = incomeGrid ?? balanceGrid ?? cashGrid;
+    return {
+      financials: {
+        currency: "PKR",
+        unitScale: unit?.unitScale ?? 1,
+        unitLabel: "PKR",
+        income,
+        balance,
+        cashFlow,
+        ratios: deriveRatios(income, balance),
+      },
+      endpoint,
+      summary: `${income.length} income / ${balance.length} balance / ${cashFlow.length} cash-flow periods`,
+    };
   },
   ["khistocks-financials-v1"],
   { revalidate: KHISTOCKS_TTL.financials },
 );
 
-export async function getFinancials(symbol: string) {
-  return loadFinancials(normalizeSymbol(symbol));
+export async function getFinancials(symbolInput: string): Promise<Sourced<Financials>> {
+  const symbol = normalizeSymbol(symbolInput);
+  try {
+    const result = await loadFinancials(symbol);
+    return {
+      data: result.financials,
+      notes: [note("khistocks", result.endpoint, true, result.summary)],
+    };
+  } catch (error) {
+    return {
+      data: sampleFinancials(symbol),
+      notes: [
+        note("khistocks", "khistocks.com", false, errorMessage(error)),
+        note("sample", "bundled statements", true, "khistocks unreachable — showing generated sample financials"),
+      ],
+    };
+  }
 }

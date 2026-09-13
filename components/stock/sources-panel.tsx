@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { CheckCircle2Icon, DatabaseIcon, TriangleAlertIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -56,7 +57,7 @@ export function SourcesPanel({ notes }: { notes: SourceNote[] }) {
 }
 
 /** Banner shown at the top of any page running on bundled data. */
-export function SampleDataBanner({ notes }: { notes: SourceNote[] }) {
+export function SampleDataBanner({ notes, symbol }: { notes: SourceNote[]; symbol?: string }) {
   if (!notes.some((note) => note.source === "sample")) return null;
 
   return (
@@ -65,7 +66,14 @@ export function SampleDataBanner({ notes }: { notes: SourceNote[] }) {
       <p className="text-muted-foreground">
         <span className="text-foreground font-medium">Showing sample data.</span> One or more upstream sources
         could not be reached from this deployment, so parts of this page are generated placeholders — realistic in
-        shape, but not real market figures. Check the data-sources panel below for which parts.
+        shape, but not real market figures. The panel at the bottom of the page says which parts;{" "}
+        <Link
+          href={symbol ? `/api/diagnostics?symbol=${symbol}` : "/api/diagnostics"}
+          className="text-foreground font-medium underline underline-offset-2"
+        >
+          run the diagnostics
+        </Link>{" "}
+        to see the exact request each source made and what came back.
       </p>
     </div>
   );

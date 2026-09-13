@@ -5,7 +5,7 @@ import type { SourceId, SourceNote } from "./types";
 /**
  * Neither dps.psx.com.pk nor khistocks.com publishes an API, and both reject
  * requests that don't look like a browser. Everything outbound goes through here
- * so the headers, timeout and retry behaviour stay in one place.
+ * so the headers, timeout, retry and circuit-breaker behaviour stay in one place.
  */
 
 const USER_AGENT =
@@ -23,6 +23,10 @@ export interface FetchOptions {
   timeoutMs?: number;
   /** Extra attempts after the first failure. */
   retries?: number;
+  /** Skip the per-host circuit breaker — used by the diagnostics route. */
+  ignoreBreaker?: boolean;
+  /** Bypass the Next.js data cache entirely — used by the diagnostics route. */
+  noStore?: boolean;
 }
 
 export class UpstreamError extends Error {
@@ -37,58 +41,111 @@ export class UpstreamError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-export async function fetchUpstream(url: string, options: FetchOptions = {}): Promise<string> {
-  const {
-    method = "GET",
-    form,
-    headers = {},
-    revalidate = 3600,
-    tags,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
-    retries = 1,
-  } = options;
+/**
+ * Per-host circuit breaker. When an upstream is down, a page would otherwise pay
+ * the full timeout on every request for every endpoint it touches. After a few
+ * consecutive failures the host is skipped outright for a short cooldown, so a
+ * page renders its sample fallback immediately instead of hanging. State is
+ * per-instance and in-memory, which is the right scope: it's about not hammering
+ * a host from this process, not about correctness.
+ */
+const BREAKER_THRESHOLD = 3;
+const BREAKER_COOLDOWN_MS = 60_000;
 
+const breakers = new Map<string, { failures: number; openUntil: number }>();
+
+function breakerFor(host: string) {
+  let breaker = breakers.get(host);
+  if (!breaker) {
+    breaker = { failures: 0, openUntil: 0 };
+    breakers.set(host, breaker);
+  }
+  return breaker;
+}
+
+function recordSuccess(host: string) {
+  breakers.set(host, { failures: 0, openUntil: 0 });
+}
+
+function recordFailure(host: string) {
+  const breaker = breakerFor(host);
+  breaker.failures += 1;
+  if (breaker.failures >= BREAKER_THRESHOLD) {
+    breaker.openUntil = Date.now() + BREAKER_COOLDOWN_MS;
+  }
+}
+
+function breakerOpen(host: string) {
+  const breaker = breakers.get(host);
+  return breaker != null && breaker.openUntil > Date.now();
+}
+
+function requestHeaders(url: string, options: FetchOptions) {
   const origin = new URL(url).origin;
+  return {
+    "User-Agent": USER_AGENT,
+    Accept: "text/html,application/json,application/xhtml+xml,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    Referer: `${origin}/`,
+    ...(options.form ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+    ...(options.method === "POST" ? { "X-Requested-With": "XMLHttpRequest" } : {}),
+    ...options.headers,
+  };
+}
+
+/** One attempt, no retries or breaker logic. Returns the raw Response. */
+async function attempt(url: string, options: FetchOptions): Promise<Response> {
+  const { method = "GET", form, revalidate = 3600, tags, timeoutMs = DEFAULT_TIMEOUT_MS, noStore } = options;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      method,
+      signal: controller.signal,
+      headers: requestHeaders(url, options),
+      body: form ? new URLSearchParams(form).toString() : undefined,
+      ...(noStore
+        ? { cache: "no-store" as const }
+        : { next: { revalidate, ...(tags ? { tags } : {}) } }),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function fetchUpstream(url: string, options: FetchOptions = {}): Promise<string> {
+  const { method = "GET", retries = 1, ignoreBreaker = false } = options;
+  const host = new URL(url).host;
+
+  if (!ignoreBreaker && breakerOpen(host)) {
+    throw new UpstreamError(`${host} is failing — skipped without a request (circuit breaker open)`);
+  }
+
   let lastError: unknown;
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+  for (let index = 0; index <= retries; index++) {
     try {
-      const response = await fetch(url, {
-        method,
-        signal: controller.signal,
-        headers: {
-          "User-Agent": USER_AGENT,
-          Accept: "text/html,application/json,application/xhtml+xml,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-          Referer: `${origin}/`,
-          ...(form ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
-          ...(method === "POST" ? { "X-Requested-With": "XMLHttpRequest" } : {}),
-          ...headers,
-        },
-        body: form ? new URLSearchParams(form).toString() : undefined,
-        next: { revalidate, ...(tags ? { tags } : {}) },
-      });
-
+      const response = await attempt(url, options);
       if (!response.ok) {
         throw new UpstreamError(`${method} ${url} responded ${response.status}`, response.status);
       }
-      return await response.text();
+      const text = await response.text();
+      recordSuccess(host);
+      return text;
     } catch (error) {
       lastError = error;
       // 4xx other than 429 won't fix themselves on a retry.
       if (error instanceof UpstreamError && error.status && error.status < 500 && error.status !== 429) {
         break;
       }
-      if (attempt < retries) {
-        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      if (index < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 400 * (index + 1)));
       }
-    } finally {
-      clearTimeout(timer);
     }
   }
 
+  if (!ignoreBreaker) recordFailure(host);
   throw lastError instanceof Error ? lastError : new UpstreamError(String(lastError));
 }
 
@@ -101,6 +158,69 @@ export async function fetchJson<T>(url: string, options: FetchOptions = {}): Pro
     return JSON.parse(text) as T;
   } catch {
     throw new UpstreamError(`${url} did not return JSON`);
+  }
+}
+
+export interface Probe {
+  url: string;
+  method: string;
+  ok: boolean;
+  status: number | null;
+  elapsedMs: number;
+  contentType: string | null;
+  bytes: number | null;
+  /** First few hundred characters of the body, so a block page or redirect is visible. */
+  bodyPrefix: string | null;
+  error: string | null;
+  /** Filled in by the caller: what the parser made of the body. */
+  parsed?: Record<string, unknown>;
+}
+
+/**
+ * A single uncached, breaker-free request that reports what came back rather than
+ * throwing. This exists for `/api/diagnostics` — when the app falls back to sample
+ * data, this is what says why.
+ */
+export async function probeUpstream(
+  url: string,
+  options: FetchOptions = {},
+): Promise<Probe & { body: string | null }> {
+  const started = Date.now();
+  const method = options.method ?? "GET";
+
+  try {
+    const response = await attempt(url, {
+      ...options,
+      retries: 0,
+      noStore: true,
+      timeoutMs: options.timeoutMs ?? 12_000,
+    });
+    const body = await response.text();
+    return {
+      url,
+      method,
+      ok: response.ok,
+      status: response.status,
+      elapsedMs: Date.now() - started,
+      contentType: response.headers.get("content-type"),
+      bytes: body.length,
+      bodyPrefix: body.slice(0, 400).replace(/\s+/g, " ").trim(),
+      error: response.ok ? null : `HTTP ${response.status}`,
+      body: response.ok ? body : null,
+    };
+  } catch (error) {
+    return {
+      url,
+      method,
+      ok: false,
+      status: null,
+      elapsedMs: Date.now() - started,
+      contentType: null,
+      bytes: null,
+      bodyPrefix: null,
+      error: errorMessage(error),
+      body: null,
+    };
   }
 }
 

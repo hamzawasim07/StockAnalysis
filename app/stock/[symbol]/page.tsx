@@ -34,7 +34,7 @@ export default async function StockPage({ params, searchParams }: PageProps) {
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5 px-4 py-6 sm:px-6">
-      <SampleDataBanner notes={snapshot.notes} />
+      <SampleDataBanner notes={snapshot.notes} symbol={symbol} />
       <QuoteHeader profile={snapshot.profile} quote={snapshot.quote} stats={snapshot.stats} />
       <StockTabs snapshot={snapshot} range={range} />
       <SourcesPanel notes={snapshot.notes} />

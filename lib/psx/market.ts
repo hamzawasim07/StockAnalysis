@@ -3,9 +3,9 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { parseTables } from "@/lib/data/html";
-import { errorMessage, fetchUpstream, note } from "@/lib/data/http";
+import { errorMessage, fetchUpstream, note, UpstreamError } from "@/lib/data/http";
 import { sampleBars, SAMPLE_SYMBOLS } from "@/lib/data/sample";
-import type { SourceNote, Sourced } from "@/lib/data/types";
+import type { Sourced } from "@/lib/data/types";
 import { parseLooseNumber } from "@/lib/format";
 import { normalizeSymbol } from "@/lib/utils";
 
@@ -107,33 +107,39 @@ function sampleBoard(): MarketRow[] {
   }).filter((row): row is MarketRow => row !== null);
 }
 
+/** Throws rather than returning the sample board, so a failure is never cached. */
 const loadBoard = unstable_cache(
-  async (): Promise<Sourced<MarketRow[]>> => {
-    const notes: SourceNote[] = [];
-    try {
-      const html = await fetchUpstream(PSX_ENDPOINTS.marketWatch, {
-        revalidate: PSX_TTL.marketWatch,
-        tags: ["psx-market-watch"],
-      });
-      const rows = parseMarketWatchHtml(html);
-      if (rows.length > 0) {
-        notes.push(note("psx", "dps.psx.com.pk/market-watch", true, `${rows.length} scrips`));
-        return { data: rows, notes };
-      }
-      notes.push(note("psx", "dps.psx.com.pk/market-watch", false, "no rows parsed"));
-    } catch (error) {
-      notes.push(note("psx", "dps.psx.com.pk/market-watch", false, errorMessage(error)));
+  async (): Promise<MarketRow[]> => {
+    const html = await fetchUpstream(PSX_ENDPOINTS.marketWatch, {
+      revalidate: PSX_TTL.marketWatch,
+      tags: ["psx-market-watch"],
+    });
+    const rows = parseMarketWatchHtml(html);
+    if (rows.length === 0) {
+      throw new UpstreamError("market-watch page reached, but no rows could be parsed");
     }
-
-    notes.push(note("sample", "bundled board", true, "PSX unreachable — showing generated sample board"));
-    return { data: sampleBoard(), notes };
+    return rows;
   },
   ["psx-market-watch-v1"],
   { revalidate: PSX_TTL.marketWatch, tags: ["psx-market-watch"] },
 );
 
-export async function getMarketBoard() {
-  return loadBoard();
+export async function getMarketBoard(): Promise<Sourced<MarketRow[]>> {
+  try {
+    const rows = await loadBoard();
+    return {
+      data: rows,
+      notes: [note("psx", "dps.psx.com.pk/market-watch", true, `${rows.length} scrips`)],
+    };
+  } catch (error) {
+    return {
+      data: sampleBoard(),
+      notes: [
+        note("psx", "dps.psx.com.pk/market-watch", false, errorMessage(error)),
+        note("sample", "bundled board", true, "PSX unreachable — showing generated sample board"),
+      ],
+    };
+  }
 }
 
 export interface MarketMovers {
@@ -179,4 +185,3 @@ export async function getMarketRow(symbol: string): Promise<MarketRow | null> {
   return data.find((row) => row.symbol === target) ?? null;
 }
 
-export type { SourceNote };

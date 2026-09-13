@@ -5,7 +5,7 @@ import { unstable_cache } from "next/cache";
 import { findTableWithRow, labelValueMap, parseTables, pickLabel, pickNumber } from "@/lib/data/html";
 import { errorMessage, fetchUpstream, note } from "@/lib/data/http";
 import { sampleCompanyName, sampleSector, sampleShares } from "@/lib/data/sample";
-import type { CompanyProfile, Dividend, DividendKind, SourceNote, Sourced } from "@/lib/data/types";
+import type { CompanyProfile, Dividend, DividendKind, Sourced } from "@/lib/data/types";
 import { parseLooseNumber } from "@/lib/format";
 import { normalizeSymbol } from "@/lib/utils";
 
@@ -122,43 +122,47 @@ function toIsoDate(raw: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
 }
 
+/**
+ * Throws when the page can't be fetched, so a failure is never cached: the sample
+ * profile is assembled outside the cache instead.
+ */
 const loadCompany = unstable_cache(
-  async (symbol: string): Promise<Sourced<CompanyPage>> => {
-    const notes: SourceNote[] = [];
-    try {
-      const html = await fetchUpstream(PSX_ENDPOINTS.company(symbol), {
-        revalidate: PSX_TTL.company,
-        tags: [`psx-company-${symbol}`],
-      });
-      const page = parseCompanyHtml(symbol, html);
-      notes.push(note("psx", `dps.psx.com.pk/company/${symbol}`, true));
-      return { data: page, notes };
-    } catch (error) {
-      notes.push(note("psx", `dps.psx.com.pk/company/${symbol}`, false, errorMessage(error)));
-      return {
-        data: {
-          profile: {
-            symbol,
-            name: sampleCompanyName(symbol),
-            sector: sampleSector(symbol),
-            isETF: false,
-            listedShares: sampleShares(symbol),
-            freeFloat: null,
-            marketCap: null,
-            website: null,
-            address: null,
-            ceo: null,
-          },
-          dividends: [],
-        },
-        notes,
-      };
-    }
+  async (symbol: string): Promise<CompanyPage> => {
+    const html = await fetchUpstream(PSX_ENDPOINTS.company(symbol), {
+      revalidate: PSX_TTL.company,
+      tags: [`psx-company-${symbol}`],
+    });
+    return parseCompanyHtml(symbol, html);
   },
   ["psx-company-v1"],
   { revalidate: PSX_TTL.company },
 );
 
-export async function getCompanyPage(symbol: string) {
-  return loadCompany(normalizeSymbol(symbol));
+export async function getCompanyPage(symbolInput: string): Promise<Sourced<CompanyPage>> {
+  const symbol = normalizeSymbol(symbolInput);
+  try {
+    return {
+      data: await loadCompany(symbol),
+      notes: [note("psx", `dps.psx.com.pk/company/${symbol}`, true)],
+    };
+  } catch (error) {
+    return {
+      data: {
+        profile: {
+          symbol,
+          name: sampleCompanyName(symbol),
+          sector: sampleSector(symbol),
+          isETF: false,
+          listedShares: sampleShares(symbol),
+          freeFloat: null,
+          marketCap: null,
+          website: null,
+          address: null,
+          ceo: null,
+        },
+        dividends: [],
+      },
+      notes: [note("psx", `dps.psx.com.pk/company/${symbol}`, false, errorMessage(error))],
+    };
+  }
 }
