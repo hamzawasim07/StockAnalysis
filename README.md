@@ -53,9 +53,13 @@ end-of-day figures, not a streaming quote** — the UI says so.
 
 ### khistocks.com (`lib/khistocks/`)
 
-khistocks has no API and no stable per-symbol URL scheme, so `client.ts` tries a list of
-candidate URL patterns per page kind and keeps the first that returns real tables. If the
-site changes, add the new pattern there rather than touching the parsers.
+khistocks has no API and no documented per-symbol URL scheme, so rather than guessing
+URLs, `discover.ts` crawls the site's own navigation: it fetches a few entry pages,
+collects every link, and scores the ones whose path or text names the symbol *and* look
+like a financials, payouts or profile page. Whatever the real scheme is, the site links to
+it. A company page is followed one level deeper to pick up its statement and payout links.
+The hard-coded patterns in `client.ts` remain only as a fallback for when the crawl finds
+nothing.
 
 Statements are parsed by **shape, not selectors**: `parse.ts` turns any label-per-row /
 period-per-column table into a grid, parsing headers like `FY2024`, `Jun-24`, `31-Dec-2023`
@@ -103,6 +107,22 @@ lib/
   format.ts, utils.ts
 ```
 
+## Tests
+
+```bash
+npm test
+```
+
+Vitest, no network. The scrapers' pure logic — number and date parsing, period headers,
+unit scaling, statement identification, ratio derivation, link scoring, and the full
+HTML-to-normalised-statements pipeline — runs against fixtures in `tests/fixtures/`. The
+fixtures are written in the shape PSX-listed accounts are published in (line items down,
+periods across, `Rs '000`, parenthesised negatives); they stand in for markup that could
+not be fetched from the build environment, so they prove the parsing logic is sound, not
+that any particular site markup exists. Two invariants are enforced there and worth
+keeping: EPS is never multiplied by the statement's unit scale, and every generated
+sample statement reconciles line by line.
+
 ## Getting started
 
 ```bash
@@ -137,10 +157,19 @@ curl -s https://<your-deployment>/api/stock/LUCK/financials | jq '.notes, (.inco
 ```
 
 A note with `"source": "sample"` means that source did not parse; the accompanying
-message names the endpoint and the failure. For khistocks, the message lists which URL
-patterns were tried — open the real page in a browser, check the Network tab for the URL
-(and whether the table is rendered server-side or by AJAX), and add the working pattern to
-`CANDIDATES` in `lib/khistocks/client.ts`.
+message names the endpoint and the failure.
+
+`/api/diagnostics?symbol=LUCK` is the fuller picture: it hits every scraped endpoint once,
+uncached and without the circuit breaker, and reports the HTTP status, timing, content
+type, the first 400 characters of the body, what the parser extracted, and — for khistocks
+— the per-symbol links discovery found on each page. The `verdict` field separates the two
+failures that need different fixes:
+
+- **Requests failing** (403, timeout, connection refused) — no parser change helps; the
+  requests aren't landing.
+- **Requests succeeding but nothing parsed** — the site's markup differs from what the
+  scrapers expect. The `bodyPrefix`, `rowLabels` and `symbolLinks` fields say how, and the
+  fix is a row-label or URL adjustment in `lib/khistocks/`.
 
 ## Known limitations / ideas next
 

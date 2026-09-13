@@ -151,6 +151,46 @@ interface ParsedFinancials {
   summary: string;
 }
 
+export interface AssembledFinancials {
+  financials: Financials;
+  counts: { income: number; balance: number; cashFlow: number };
+}
+
+/**
+ * HTML in, normalised statements out — the whole extraction pipeline with no
+ * fetching, so it can be exercised against fixture markup. Returns null when
+ * nothing usable was recognised.
+ */
+export function assembleFinancials(html: string): AssembledFinancials | null {
+  const grids = parseTables(html)
+    .map(toStatementGrid)
+    .filter((grid): grid is StatementGrid => grid !== null);
+
+  const incomeGrid = bestGrid(grids, INCOME_MARKERS);
+  const balanceGrid = bestGrid(grids, BALANCE_MARKERS);
+  const cashGrid = bestGrid(grids, CASHFLOW_MARKERS);
+
+  const income = incomeGrid ? buildIncome(incomeGrid) : [];
+  const balance = balanceGrid ? buildBalance(balanceGrid) : [];
+  const cashFlow = cashGrid ? buildCashFlow(cashGrid) : [];
+
+  if (income.length === 0 && balance.length === 0) return null;
+
+  const unit = incomeGrid ?? balanceGrid ?? cashGrid;
+  return {
+    financials: {
+      currency: "PKR",
+      unitScale: unit?.unitScale ?? 1,
+      unitLabel: "PKR",
+      income,
+      balance,
+      cashFlow,
+      ratios: deriveRatios(income, balance),
+    },
+    counts: { income: income.length, balance: balance.length, cashFlow: cashFlow.length },
+  };
+}
+
 /**
  * Throws when nothing usable was parsed, so a failure is never cached — the sample
  * statements are substituted outside the cache instead.
@@ -162,36 +202,16 @@ const loadFinancials = unstable_cache(
       throw new UpstreamError(summariseAttempts(page.attempts));
     }
 
-    const grids = parseTables(page.html)
-      .map(toStatementGrid)
-      .filter((grid): grid is StatementGrid => grid !== null);
-
-    const incomeGrid = bestGrid(grids, INCOME_MARKERS);
-    const balanceGrid = bestGrid(grids, BALANCE_MARKERS);
-    const cashGrid = bestGrid(grids, CASHFLOW_MARKERS);
-
-    const income = incomeGrid ? buildIncome(incomeGrid) : [];
-    const balance = balanceGrid ? buildBalance(balanceGrid) : [];
-    const cashFlow = cashGrid ? buildCashFlow(cashGrid) : [];
-
     const endpoint = page.url.replace(/^https?:\/\//, "");
-    if (income.length === 0 && balance.length === 0) {
+    const assembled = assembleFinancials(page.html);
+    if (!assembled) {
       throw new UpstreamError(`${endpoint} reached, but no statement tables were recognised`);
     }
 
-    const unit = incomeGrid ?? balanceGrid ?? cashGrid;
     return {
-      financials: {
-        currency: "PKR",
-        unitScale: unit?.unitScale ?? 1,
-        unitLabel: "PKR",
-        income,
-        balance,
-        cashFlow,
-        ratios: deriveRatios(income, balance),
-      },
+      financials: assembled.financials,
       endpoint,
-      summary: `${income.length} income / ${balance.length} balance / ${cashFlow.length} cash-flow periods`,
+      summary: `${assembled.counts.income} income / ${assembled.counts.balance} balance / ${assembled.counts.cashFlow} cash-flow periods`,
     };
   },
   ["khistocks-financials-v1"],

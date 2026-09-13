@@ -2,20 +2,26 @@ import "server-only";
 
 import { errorMessage, fetchUpstream } from "@/lib/data/http";
 
+import { discoverUrls } from "./discover";
+
 /**
  * khistocks.com publishes no API and no stable URL scheme for per-symbol pages, so
  * each lookup tries a list of candidate URLs and keeps the first that comes back
  * with real content. When the site changes, add the new pattern here rather than
  * touching the parsers.
  */
-export const KHISTOCKS_BASE = "https://www.khistocks.com";
+export { KHISTOCKS_BASE } from "./discover";
+
+import { KHISTOCKS_BASE } from "./discover";
 
 export const KHISTOCKS_TTL = {
   financials: 60 * 60 * 24,
   dividends: 60 * 60 * 12,
 } as const;
 
-export type PageKind = "financials" | "ratios" | "dividends" | "profile";
+export type { PageKind } from "./discover";
+
+import type { PageKind } from "./discover";
 
 const CANDIDATES: Record<PageKind, (symbol: string) => string[]> = {
   financials: (symbol) => [
@@ -57,7 +63,13 @@ function looksUseful(html: string) {
 export async function fetchKhistocksPage(kind: PageKind, symbol: string): Promise<PageResult> {
   const attempts: PageResult["attempts"] = [];
 
-  for (const url of CANDIDATES[kind](symbol)) {
+  // Links the site itself published come first — they are the real scheme, whatever
+  // it is. The hard-coded patterns below are only a fallback for when the crawl
+  // finds nothing (site down, markup changed, navigation rendered client-side).
+  const discovered = await discoverUrls(symbol, kind);
+  const candidates = [...new Set([...discovered, ...CANDIDATES[kind](symbol)])];
+
+  for (const url of candidates) {
     try {
       const html = await fetchUpstream(url, {
         revalidate: KHISTOCKS_TTL[kind === "ratios" ? "financials" : kind === "profile" ? "financials" : kind],

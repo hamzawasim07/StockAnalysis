@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { parseTables } from "@/lib/data/html";
 import { probeUpstream, type Probe } from "@/lib/data/http";
+import { scoreLinks } from "@/lib/khistocks/discover";
+import { assembleFinancials } from "@/lib/khistocks/financials";
 import { toStatementGrid } from "@/lib/khistocks/parse";
 import { PSX_ENDPOINTS } from "@/lib/psx/endpoints";
 import { parseHistoricalHtml } from "@/lib/psx/historical";
@@ -122,11 +124,19 @@ export async function GET(request: Request) {
     await run(`khistocks:${url.replace("https://www.khistocks.com", "") || "/"}`, url, {}, (body) => {
       const tables = parseTables(body);
       const grids = tables.map(toStatementGrid).filter((grid) => grid !== null);
+      const assembled = assembleFinancials(body);
       return {
         tablesFound: tables.length,
         statementGrids: grids.length,
         periodsFound: grids[0]?.periods.map((period) => period.label) ?? [],
         rowLabels: grids[0] ? [...grids[0].rows.keys()].slice(0, 12) : [],
+        // What the real adapter would extract from this exact page.
+        extracted: assembled?.counts ?? null,
+        // Links on this page that discovery would follow for this symbol — the
+        // fastest way to learn the site's real per-company URL scheme.
+        symbolLinks: scoreLinks(body, url, symbol)
+          .slice(0, 8)
+          .map((link) => `${link.kind}: ${link.url}`),
       };
     });
   }
