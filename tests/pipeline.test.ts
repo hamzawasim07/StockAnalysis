@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { sampleFinancials, SAMPLE_SYMBOLS } from "@/lib/data/sample";
-import { assembleFinancials } from "@/lib/khistocks/financials";
+import { assembleFinancials, describeMiss } from "@/lib/khistocks/financials";
 import { FINANCIALS_MILLIONS, FINANCIALS_PAGE } from "./fixtures/khistocks";
 
 describe("end-to-end statement extraction", () => {
@@ -84,5 +84,28 @@ describe("bundled sample statements", () => {
   it("is deterministic across calls", () => {
     // The UI would flicker between renders if the seed weren't stable.
     expect(sampleFinancials("LUCK")).toEqual(sampleFinancials("LUCK"));
+  });
+});
+
+describe("diagnosing a reached-but-unparsed page", () => {
+  it("identifies a page with no tables", () => {
+    expect(describeMiss("<html><body><p>Redirecting…</p></body></html>")).toMatch(/no tables at all/);
+  });
+
+  it("identifies client-side rendering from empty table shells", () => {
+    // The case that no parser change can fix: markup present, figures injected by JS.
+    const shell = `<html><body><table><thead><tr><th>Particulars</th></tr></thead><tbody></tbody></table></body></html>`;
+    expect(describeMiss(shell)).toMatch(/injected client-side/);
+  });
+
+  it("reports the headers it saw when periods can't be parsed", () => {
+    const odd = `<table><tr><th>Item</th><th>Latest</th><th>Prior</th></tr><tr><td>Net Sales</td><td>1</td><td>2</td></tr></table>`;
+    expect(describeMiss(odd)).toMatch(/no parseable period headers/);
+    expect(describeMiss(odd)).toMatch(/Latest/);
+  });
+
+  it("reports the row labels it saw when line items don't match", () => {
+    const unknown = `<table><tr><th>Particulars</th><th>FY2025</th></tr><tr><td>Widgets Shipped</td><td>42</td></tr></table>`;
+    expect(describeMiss(unknown)).toMatch(/Widgets Shipped/);
   });
 });

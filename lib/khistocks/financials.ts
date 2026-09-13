@@ -151,6 +151,37 @@ interface ParsedFinancials {
   summary: string;
 }
 
+/**
+ * Says *how* a reached page failed to yield statements. The distinction decides the
+ * fix: empty table shells mean the figures are injected by JavaScript and a plain
+ * server fetch will never see them (a headless fetch would be needed), whereas
+ * populated tables we failed to recognise is a row-label or header problem here.
+ */
+export function describeMiss(html: string): string {
+  const tables = parseTables(html);
+  if (tables.length === 0) {
+    return "the response contained no tables at all (likely a redirect, error page, or a shell whose content is loaded by JavaScript)";
+  }
+
+  const populated = tables.filter((table) => table.rows.length > 0);
+  if (populated.length === 0) {
+    return `it contained ${tables.length} empty table shell(s) — the figures are injected client-side, so a server-side fetch cannot see them`;
+  }
+
+  const withPeriods = populated.filter((table) => toStatementGrid(table) !== null);
+  if (withPeriods.length === 0) {
+    return `it had ${populated.length} populated table(s) but no parseable period headers — headers seen: ${populated
+      .flatMap((table) => table.headers)
+      .slice(0, 8)
+      .join(" | ")}`;
+  }
+
+  return `its ${withPeriods.length} period table(s) carried none of the expected line items — first column values: ${withPeriods[0].rows
+    .slice(0, 8)
+    .map((row) => row[0])
+    .join(" | ")}`;
+}
+
 export interface AssembledFinancials {
   financials: Financials;
   counts: { income: number; balance: number; cashFlow: number };
@@ -205,7 +236,7 @@ const loadFinancials = unstable_cache(
     const endpoint = page.url.replace(/^https?:\/\//, "");
     const assembled = assembleFinancials(page.html);
     if (!assembled) {
-      throw new UpstreamError(`${endpoint} reached, but no statement tables were recognised`);
+      throw new UpstreamError(`${endpoint} reached, but ${describeMiss(page.html)}`);
     }
 
     return {
