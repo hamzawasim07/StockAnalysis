@@ -9,6 +9,7 @@ import {
   RevenueProfitChart,
 } from "@/components/stock/financial-charts";
 import { DividendHistory } from "@/components/stock/dividends";
+import { SampleChip, SampleNotice } from "@/components/stock/sample-notice";
 import { HistoryTable } from "@/components/stock/history-table";
 import { PriceChart } from "@/components/stock/price-chart";
 import { StatementTable, type LineSpec } from "@/components/stock/statement-table";
@@ -113,7 +114,7 @@ function overviewStats(snapshot: StockSnapshot): StatItem[] {
 }
 
 export function StockTabs({ snapshot, range }: { snapshot: StockSnapshot; range: HistoryRange }) {
-  const { financials, bars, stats, dividends, profile, quote } = snapshot;
+  const { financials, bars, stats, dividends, profile, quote, provenance } = snapshot;
   const stats12 = React.useMemo(() => overviewStats(snapshot), [snapshot]);
   const unitNote = `Figures in ${financials.currency}. Statements are as reported by the source and converted to absolute rupees.`;
 
@@ -121,15 +122,32 @@ export function StockTabs({ snapshot, range }: { snapshot: StockSnapshot; range:
     <Tabs defaultValue="overview">
       <TabsList className="w-full justify-start overflow-x-auto scrollbar-thin sm:w-auto">
         <TabsTrigger value="overview">Overview</TabsTrigger>
-        <TabsTrigger value="financials">Financials</TabsTrigger>
-        <TabsTrigger value="ratios">Ratios</TabsTrigger>
-        <TabsTrigger value="dividends">Dividends</TabsTrigger>
-        <TabsTrigger value="history">Price history</TabsTrigger>
+        <TabsTrigger value="financials">
+          Financials
+          <SampleChip source={provenance.financials} />
+        </TabsTrigger>
+        <TabsTrigger value="ratios">
+          Ratios
+          <SampleChip source={provenance.financials} />
+        </TabsTrigger>
+        <TabsTrigger value="dividends">
+          Dividends
+          <SampleChip source={provenance.dividends} />
+        </TabsTrigger>
+        <TabsTrigger value="history">
+          Price history
+          <SampleChip source={provenance.prices} />
+        </TabsTrigger>
         <TabsTrigger value="profile">Profile</TabsTrigger>
       </TabsList>
 
       <TabsContent value="overview" className="space-y-4">
         <PriceChart symbol={profile.symbol} initialBars={bars} initialRange={range} initialStats={stats} />
+        <SampleNotice
+          source={provenance.financials}
+          what="Company financials from khistocks.com"
+          symbol={profile.symbol}
+        />
         <StatGrid items={stats12} />
         <div className="grid gap-4 lg:grid-cols-2">
           <RevenueProfitChart income={financials.income} />
@@ -138,6 +156,11 @@ export function StockTabs({ snapshot, range }: { snapshot: StockSnapshot; range:
       </TabsContent>
 
       <TabsContent value="financials" className="space-y-4">
+        <SampleNotice
+          source={provenance.financials}
+          what="Company financials from khistocks.com"
+          symbol={profile.symbol}
+        />
         <div className="grid gap-4 lg:grid-cols-2">
           <RevenueProfitChart income={financials.income} />
           <BalanceCompositionChart balance={financials.balance} />
@@ -177,6 +200,11 @@ export function StockTabs({ snapshot, range }: { snapshot: StockSnapshot; range:
       </TabsContent>
 
       <TabsContent value="ratios" className="space-y-4">
+        <SampleNotice
+          source={provenance.financials}
+          what="The statements these ratios are derived from"
+          symbol={profile.symbol}
+        />
         <MarginTrendChart ratios={financials.ratios} />
         <Card>
           <CardHeader className="pb-2">
@@ -192,11 +220,17 @@ export function StockTabs({ snapshot, range }: { snapshot: StockSnapshot; range:
         </Card>
       </TabsContent>
 
-      <TabsContent value="dividends">
+      <TabsContent value="dividends" className="space-y-4">
+        <SampleNotice
+          source={provenance.dividends}
+          what="Payout history from khistocks.com and the PSX company page"
+          symbol={profile.symbol}
+        />
         <DividendHistory dividends={dividends} price={quote.price} />
       </TabsContent>
 
       <TabsContent value="history" className="space-y-4">
+        <SampleNotice source={provenance.prices} what="Price history from the PSX data portal" symbol={profile.symbol} />
         <PriceChart symbol={profile.symbol} initialBars={bars} initialRange={range} initialStats={stats} />
         <HistoryTable bars={bars} />
       </TabsContent>

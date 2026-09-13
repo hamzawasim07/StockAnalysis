@@ -8,6 +8,7 @@
  * generated from a fixed seed so the UI is stable across reloads and deploys.
  */
 
+import { deriveRatios } from "./ratios";
 import type {
   BalanceSheet,
   Bar,
@@ -15,7 +16,6 @@ import type {
   Dividend,
   Financials,
   IncomeStatement,
-  Ratios,
   SymbolInfo,
 } from "./types";
 
@@ -169,47 +169,61 @@ export function sampleFinancials(symbol: string): Financials {
   const income: IncomeStatement[] = [];
   const balance: BalanceSheet[] = [];
   const cashFlow: CashFlow[] = [];
-  const ratios: Ratios[] = [];
 
   for (let i = years - 1; i >= 0; i--) {
     const year = CURRENT_FY - i;
+    const label = `FY${year}`;
+    const base = { label, kind: "annual" as const, year, quarter: null, endDate: `${year}-06-30` };
+
     // Compound backwards from the latest revenue at 8-22% a year.
-    const growth = Math.pow(1 + 0.08 + random() * 0.14, -i);
-    const revenue = company.revenue * growth;
-    const grossMargin = 0.14 + random() * 0.22;
-    const grossProfit = revenue * grossMargin;
-    const operatingProfit = grossProfit * (0.55 + random() * 0.25);
+    const revenue = company.revenue * Math.pow(1 + 0.08 + random() * 0.14, -i);
+
+    // The statement is built by back-solving from a target net margin, then derived
+    // strictly downwards, so every subtotal reconciles: gross - opex = operating,
+    // operating - finance + other = PBT, PBT - tax = PAT. Generating PAT
+    // independently of the chain (as an earlier version did) produced placeholder
+    // statements that failed to add up.
+    const netMargin = company.netMargin * (0.85 + random() * 0.3);
+    const taxRate = 0.26 + random() * 0.08;
+
+    const netProfit = revenue * netMargin;
+    const profitBeforeTax = netProfit / (1 - taxRate);
+    const taxation = netProfit - profitBeforeTax; // negative
+
     const financeCost = revenue * (0.01 + random() * 0.03);
     const otherIncome = revenue * random() * 0.02;
-    const profitBeforeTax = operatingProfit - financeCost + otherIncome;
-    const taxation = profitBeforeTax * (0.26 + random() * 0.08);
-    const netProfit = revenue * company.netMargin * (0.85 + random() * 0.3);
-    const eps = netProfit / company.shares;
+    const operatingProfit = profitBeforeTax + financeCost - otherIncome;
 
-    const label = `FY${year}`;
-    const endDate = `${year}-06-30`;
-    const base = { label, kind: "annual" as const, year, quarter: null, endDate };
+    // Operating expenses sit between gross and operating profit.
+    const operatingExpenses = revenue * (0.04 + random() * 0.06);
+    const grossProfit = operatingProfit + operatingExpenses;
+    const costOfSales = grossProfit - revenue; // negative
+
+    const eps = netProfit / company.shares;
 
     income.push({
       ...base,
       revenue,
-      costOfSales: -(revenue - grossProfit),
+      costOfSales,
       grossProfit,
       operatingProfit,
       financeCost: -financeCost,
       otherIncome,
       profitBeforeTax,
-      taxation: -taxation,
+      taxation,
       netProfit,
       eps,
     });
 
+    // Balance sheet: assets split into current / non-current, and funded by equity
+    // plus liabilities, so both sides total to the same figure.
     const totalAssets = revenue * (0.9 + random() * 0.8);
     const currentAssets = totalAssets * (0.35 + random() * 0.2);
     const totalEquity = totalAssets * (0.4 + random() * 0.2);
     const totalLiabilities = totalAssets - totalEquity;
     const currentLiabilities = totalLiabilities * (0.5 + random() * 0.3);
-    const shareCapital = company.shares * 10;
+    // Paid-up capital can't exceed equity, or reserves would come out negative.
+    const shareCapital = Math.min(company.shares * 10, totalEquity * (0.1 + random() * 0.3));
 
     balance.push({
       ...base,
@@ -236,19 +250,6 @@ export function sampleFinancials(symbol: string): Financials {
       netChange: operating + investing + financing,
       closingCash: Math.abs(operating + investing + financing) * (1.5 + random()),
     });
-
-    ratios.push({
-      ...base,
-      grossMarginPercent: (grossProfit / revenue) * 100,
-      operatingMarginPercent: (operatingProfit / revenue) * 100,
-      netMarginPercent: (netProfit / revenue) * 100,
-      returnOnEquityPercent: (netProfit / totalEquity) * 100,
-      returnOnAssetsPercent: (netProfit / totalAssets) * 100,
-      currentRatio: currentAssets / currentLiabilities,
-      debtToEquity: totalLiabilities / totalEquity,
-      eps,
-      bookValuePerShare: totalEquity / company.shares,
-    });
   }
 
   return {
@@ -258,7 +259,8 @@ export function sampleFinancials(symbol: string): Financials {
     income,
     balance,
     cashFlow,
-    ratios,
+    // Same derivation the real adapter uses, so sample ratios reconcile too.
+    ratios: deriveRatios(income, balance),
   };
 }
 

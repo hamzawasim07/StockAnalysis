@@ -10,7 +10,7 @@ import { getSymbolInfo } from "@/lib/psx/symbols";
 import { sampleDividends, SAMPLE_SYMBOL_SET, sampleShares } from "@/lib/data/sample";
 import { normalizeSymbol } from "@/lib/utils";
 
-import type { Dividend, HistoryRange, SourceNote, StockSnapshot } from "./types";
+import type { Dividend, HistoryRange, SectionProvenance, SourceId, SourceNote, StockSnapshot } from "./types";
 
 /**
  * Assembles one company view out of every source:
@@ -81,6 +81,18 @@ export async function getStockSnapshot(
   const marketCap =
     profile.marketCap ?? (listedShares != null && quote.price != null ? listedShares * quote.price : null);
 
+  const sourceOf = (sectionNotes: SourceNote[]): SourceId => {
+    const succeeded = sectionNotes.find((item) => item.ok);
+    return succeeded?.source ?? "sample";
+  };
+
+  const provenance: SectionProvenance = {
+    prices: sourceOf(history.notes),
+    profile: sourceOf(company.notes),
+    financials: sourceOf(financials.notes),
+    dividends: khiDividends.data.length > 0 ? sourceOf(khiDividends.notes) : sourceOf(company.notes),
+  };
+
   return {
     profile: {
       ...profile,
@@ -95,6 +107,7 @@ export async function getStockSnapshot(
     stats: statsFromBars(bars),
     financials: financials.data,
     dividends: mergeDividends(khiDividends.data, company.data.dividends, symbol, notes),
+    provenance,
     notes,
   };
 }

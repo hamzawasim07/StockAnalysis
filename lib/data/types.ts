@@ -169,6 +169,18 @@ export interface CompanyProfile {
   ceo: string | null;
 }
 
+/**
+ * Which source each block of the page actually came from. Sources fail
+ * independently, so a page can legitimately carry real prices beside placeholder
+ * financials — the UI marks each section rather than relying on one page banner.
+ */
+export interface SectionProvenance {
+  prices: SourceId;
+  profile: SourceId;
+  financials: SourceId;
+  dividends: SourceId;
+}
+
 /** Everything the stock page needs, assembled from all sources. */
 export interface StockSnapshot {
   profile: CompanyProfile;
@@ -177,6 +189,7 @@ export interface StockSnapshot {
   stats: PriceStats;
   financials: Financials;
   dividends: Dividend[];
+  provenance: SectionProvenance;
   notes: SourceNote[];
 }
 
