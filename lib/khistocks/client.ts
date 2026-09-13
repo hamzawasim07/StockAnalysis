@@ -12,8 +12,6 @@ import { discoverUrls } from "./discover";
  */
 export { KHISTOCKS_BASE } from "./discover";
 
-import { KHISTOCKS_BASE } from "./discover";
-
 export const KHISTOCKS_TTL = {
   financials: 60 * 60 * 24,
   dividends: 60 * 60 * 12,
