@@ -169,3 +169,43 @@ describe("link discovery", () => {
     expect(links.some((link) => link.url.includes("LUCKY-STAR"))).toBe(false);
   });
 });
+
+describe("amount rows versus ratio rows", () => {
+  // khistocks publishes both on the same table, e.g. "Net Profit after tax" and
+  // "Net Profit after tax Ratio". Matching the ratio would report 14.96 where
+  // Rs 5.8bn belongs — a wrong number that still looks plausible.
+  const grid = toStatementGrid(
+    parseTables(`
+      <table>
+        <tr><th>Particulars</th><th>FY2023</th></tr>
+        <tr><td>Gross Profit Ratio</td><td>26.80</td></tr>
+        <tr><td>Net Profit after tax Ratio</td><td>14.96</td></tr>
+        <tr><td>Net Sales</td><td>38,922</td></tr>
+        <tr><td>Gross Profit</td><td>10,433</td></tr>
+        <tr><td>Net Profit after tax</td><td>5,821</td></tr>
+        <tr><td>Earnings Per Share</td><td>19.42</td></tr>
+      </table>`)[0],
+  )!;
+
+  it("returns the amount, not the ratio, even when the ratio row comes first", () => {
+    expect(readRow(grid, ...LINE_ITEMS.netProfit)[0]).toBe(5821);
+    expect(readRow(grid, ...LINE_ITEMS.grossProfit)[0]).toBe(10433);
+    expect(readRow(grid, ...LINE_ITEMS.revenue)[0]).toBe(38922);
+  });
+
+  it("still returns per-share figures when those are what was asked for", () => {
+    expect(readRow(grid, ...LINE_ITEMS.eps)[0]).toBe(19.42);
+  });
+
+  it("prefers the shortest matching label", () => {
+    const verbose = toStatementGrid(
+      parseTables(`
+        <table>
+          <tr><th>Particulars</th><th>FY2023</th></tr>
+          <tr><td>Net sales of goods including related party transactions</td><td>99,999</td></tr>
+          <tr><td>Net Sales</td><td>38,922</td></tr>
+        </table>`)[0],
+    )!;
+    expect(readRow(verbose, ...LINE_ITEMS.revenue)[0]).toBe(38922);
+  });
+});

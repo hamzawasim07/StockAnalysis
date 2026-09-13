@@ -131,22 +131,45 @@ export function detectUnits(text: string): { unitScale: number; unitLabel: strin
 }
 
 /**
- * Read one logical line item out of a grid. Each candidate is matched as a
- * substring of the row label, in order, so "sales" finds "net sales" and
- * "turnover - net" alike.
+ * Words that mark a row as a computed ratio rather than a reported amount. These
+ * pages publish both — "Net Profit after tax" and "Net Profit after tax Ratio" sit
+ * in the same table — and a substring match for an amount would happily return the
+ * percentage, putting 14.96 where Rs 5.8bn belongs.
+ */
+const DERIVED_ROW_WORDS = ["ratio", "margin", "percent", "growth", "yield", "per share", "times"];
+
+function looksDerived(rowKey: string) {
+  return DERIVED_ROW_WORDS.some((word) => rowKey.includes(word));
+}
+
+/**
+ * Read one logical line item out of a grid. Candidates are tried in order: exact
+ * label first, then substring, so "sales" finds "net sales" and "turnover - net"
+ * alike. Rows that are ratios rather than amounts are skipped unless the caller is
+ * explicitly asking for one (EPS, for example, is a per-share figure).
  */
 export function readRow(grid: StatementGrid, ...candidates: string[]): (number | null)[] {
+  const wantsDerived = candidates.some((candidate) => looksDerived(labelKey(candidate)));
+
   for (const candidate of candidates) {
     const key = labelKey(candidate);
     const exact = grid.rows.get(key);
     if (exact) return exact;
   }
+
+  // Prefer the shortest matching label: "net sales" beats "net sales of goods
+  // including related party transactions" as the intended line item.
+  let best: { key: string; values: (number | null)[] } | null = null;
   for (const candidate of candidates) {
     const key = labelKey(candidate);
     for (const [rowKey, values] of grid.rows) {
-      if (rowKey.includes(key)) return values;
+      if (!rowKey.includes(key)) continue;
+      if (!wantsDerived && looksDerived(rowKey)) continue;
+      if (!best || rowKey.length < best.key.length) best = { key: rowKey, values };
     }
+    if (best) return best.values;
   }
+
   return grid.periods.map(() => null);
 }
 
