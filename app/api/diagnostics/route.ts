@@ -8,7 +8,7 @@ import { toStatementGrid } from "@/lib/khistocks/parse";
 import { PSX_ENDPOINTS } from "@/lib/psx/endpoints";
 import { parseHistoricalHtml } from "@/lib/psx/historical";
 import { parseMarketWatchHtml } from "@/lib/psx/market";
-import { normalizeSymbol } from "@/lib/utils";
+import { mapWithConcurrency, normalizeSymbol } from "@/lib/utils";
 
 /**
  * Why is this page showing sample data?
@@ -26,6 +26,15 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type Check = Probe & { name: string; parsed?: Record<string, unknown> };
+
+/** Run a parser without letting a malformed payload fail the whole report. */
+function safely<T>(fn: () => T): T | undefined {
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
+}
 
 export async function GET(request: Request) {
   const symbol = normalizeSymbol(new URL(request.url).searchParams.get("symbol") ?? "LUCK") || "LUCK";
@@ -111,35 +120,84 @@ export async function GET(request: Request) {
   });
 
   // khistocks — every candidate URL, since the working pattern is what we're after.
-  // khistocks serves JSON under /company/. getcompinfo is confirmed; the rest are
-  // plausible siblings worth probing, since a working data endpoint would beat
-  // scraping the rendered page entirely.
-  const khistocksJsonUrls = [
+  // khistocks serves JSON under /company/. getcompinfo is confirmed; its name sets
+  // the convention (get + "comp" + noun), and its payload carries a numeric company
+  // id that sibling endpoints may key on instead of the ticker. Both keyings are
+  // probed, because finding a financial data endpoint would beat scraping the
+  // rendered page entirely.
+  const describeJson = (body: string) => {
+    const trimmed = body.trimStart();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+      return { json: false, note: "not a JSON response" };
+    }
+    const parsed: unknown = JSON.parse(body);
+    const record = Array.isArray(parsed) ? parsed[0] : parsed;
+    return {
+      json: true,
+      entries: Array.isArray(parsed) ? parsed.length : 1,
+      // The field names are the whole point: they say what this endpoint serves.
+      fields: record && typeof record === "object" ? Object.keys(record).slice(0, 40) : [],
+    };
+  };
+
+  // Resolve the company id first, so id-keyed endpoints can be probed too.
+  const { body: infoBody, ...infoProbe } = await probeUpstream(
     `https://www.khistocks.com/company/getcompinfo/${symbol}`,
-    `https://www.khistocks.com/company/getfinancials/${symbol}`,
-    `https://www.khistocks.com/company/getfinancialhighlights/${symbol}`,
-    `https://www.khistocks.com/company/getbalancesheet/${symbol}`,
-    `https://www.khistocks.com/company/getincomestatement/${symbol}`,
-    `https://www.khistocks.com/company/getdividend/${symbol}`,
-    `https://www.khistocks.com/company/getpayouts/${symbol}`,
+    {},
+  );
+  checks.push({
+    name: "khistocks-api:getcompinfo",
+    ...infoProbe,
+    parsed: infoBody ? safely(() => describeJson(infoBody)) : undefined,
+  });
+
+  const companyId = infoBody
+    ? (safely(() => {
+        const parsed: unknown = JSON.parse(infoBody);
+        const record = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown> | null;
+        const id = record?.rowid ?? record?.brcode;
+        return id == null ? null : String(id);
+      }) ?? null)
+    : null;
+
+  const NOUNS = [
+    "financials",
+    "financial",
+    "financialhighlights",
+    "highlights",
+    "balancesheet",
+    "incomestatement",
+    "profitloss",
+    "cashflow",
+    "ratios",
+    "dividend",
+    "dividends",
+    "payouts",
   ];
 
-  for (const url of khistocksJsonUrls) {
-    await run(`khistocks-api:${url.split("/company/")[1]}`, url, {}, (body) => {
-      const trimmed = body.trimStart();
-      if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-        return { json: false, note: "not a JSON response" };
-      }
-      const parsed: unknown = JSON.parse(body);
-      const record = Array.isArray(parsed) ? parsed[0] : parsed;
-      return {
-        json: true,
-        entries: Array.isArray(parsed) ? parsed.length : 1,
-        // The field names are the whole point: they say what this endpoint serves.
-        fields: record && typeof record === "object" ? Object.keys(record).slice(0, 40) : [],
-      };
-    });
-  }
+  const keys = [symbol, ...(companyId && companyId !== symbol ? [companyId] : [])];
+  const jsonUrls = keys.flatMap((key) =>
+    NOUNS.flatMap((noun) => [
+      `https://www.khistocks.com/company/get${noun}/${key}`,
+      `https://www.khistocks.com/company/getcomp${noun}/${key}`,
+    ]),
+  );
+
+  // Up to ~48 candidates: run them concurrently with a short timeout, since almost
+  // all are expected to 404 quickly and the route has a 60s budget to stay inside.
+  const jsonProbes = await mapWithConcurrency(jsonUrls, 12, async (url) => {
+    const { body, ...probe } = await probeUpstream(url, { timeoutMs: 6_000 });
+    return {
+      name: `khistocks-api:${url.split("/company/")[1]}`,
+      ...probe,
+      parsed: body ? safely(() => describeJson(body)) : undefined,
+    } satisfies Check;
+  });
+
+  // Only the endpoints that answered are worth reporting; 40-odd 404s would bury
+  // the signal. The summary still records how many were tried.
+  const liveJson = jsonProbes.filter((probe) => probe.ok);
+  checks.push(...liveJson);
 
   const khistocksUrls = [
     `https://www.khistocks.com/company-information/financial-highlights/${symbol}.html`,
@@ -182,6 +240,9 @@ export async function GET(request: Request) {
       checkedAt: now.toISOString(),
       summary: {
         endpointsChecked: checks.length,
+        jsonEndpointsProbed: jsonUrls.length,
+        jsonEndpointsAnswering: liveJson.length,
+        companyId,
         reachable: reachable.length,
         parsedUsefulData: parsedSomething.length,
         verdict:
