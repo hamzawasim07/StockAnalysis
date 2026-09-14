@@ -270,3 +270,71 @@ describe("face value applied to payouts", () => {
     expect(applyFaceValue(noPercent, 5)[0].perShare).toBe(3);
   });
 });
+
+describe("khistocks-style standardised labels", () => {
+  // khistocks merges and renames account heads rather than copying the filings, and
+  // Pakistani statements use their own conventions — "mark-up" for interest,
+  // "financial charges" for finance cost, "provision for taxation" for tax.
+  const grid = toStatementGrid(
+    parseTables(`
+      <table>
+        <tr><th>Particulars</th><th>FY2025</th></tr>
+        <tr><td>Sales Revenue</td><td>38,922</td></tr>
+        <tr><td>Cost of Goods Sold</td><td>(28,489)</td></tr>
+        <tr><td>Gross Profit</td><td>10,433</td></tr>
+        <tr><td>Operating Expenses</td><td>(3,110)</td></tr>
+        <tr><td>Profit from Operation</td><td>7,323</td></tr>
+        <tr><td>Mark-up / Interest Expense</td><td>(1,204)</td></tr>
+        <tr><td>Provision for Taxation</td><td>(1,502)</td></tr>
+        <tr><td>Profit / (Loss) After Taxation</td><td>5,821</td></tr>
+        <tr><td>Earning Per Share</td><td>19.42</td></tr>
+      </table>`)[0],
+  )!;
+
+  it("matches PSX wording for each line item", () => {
+    expect(readRow(grid, ...LINE_ITEMS.revenue)[0]).toBe(38922);
+    expect(readRow(grid, ...LINE_ITEMS.costOfSales)[0]).toBe(-28489);
+    expect(readRow(grid, ...LINE_ITEMS.operatingProfit)[0]).toBe(7323);
+    expect(readRow(grid, ...LINE_ITEMS.financeCost)[0]).toBe(-1204);
+    expect(readRow(grid, ...LINE_ITEMS.taxation)[0]).toBe(-1502);
+    expect(readRow(grid, ...LINE_ITEMS.netProfit)[0]).toBe(5821);
+    expect(readRow(grid, ...LINE_ITEMS.eps)[0]).toBe(19.42);
+  });
+
+  it("reads a balance sheet using the same conventions", () => {
+    const balance = toStatementGrid(
+      parseTables(`
+        <table>
+          <tr><th>Particulars</th><th>FY2025</th></tr>
+          <tr><td>Fixed Assets</td><td>120,000</td></tr>
+          <tr><td>Current Assets</td><td>80,000</td></tr>
+          <tr><td>Total Assets</td><td>200,000</td></tr>
+          <tr><td>Ordinary Share Capital</td><td>10,000</td></tr>
+          <tr><td>Revenue Reserves</td><td>70,000</td></tr>
+          <tr><td>Share Holders Equity</td><td>80,000</td></tr>
+          <tr><td>Long Term Debt</td><td>50,000</td></tr>
+          <tr><td>Total Current Liabilities</td><td>70,000</td></tr>
+        </table>`)[0],
+    )!;
+    expect(readRow(balance, ...LINE_ITEMS.nonCurrentAssets)[0]).toBe(120000);
+    expect(readRow(balance, ...LINE_ITEMS.shareCapital)[0]).toBe(10000);
+    expect(readRow(balance, ...LINE_ITEMS.totalEquity)[0]).toBe(80000);
+    expect(readRow(balance, ...LINE_ITEMS.nonCurrentLiabilities)[0]).toBe(50000);
+    expect(readRow(balance, ...LINE_ITEMS.currentLiabilities)[0]).toBe(70000);
+  });
+
+  it("does not confuse total equity with total assets or liabilities", () => {
+    const balance = toStatementGrid(
+      parseTables(`
+        <table>
+          <tr><th>Particulars</th><th>FY2025</th></tr>
+          <tr><td>Total Equity</td><td>80,000</td></tr>
+          <tr><td>Total Liabilities</td><td>120,000</td></tr>
+          <tr><td>Total Assets</td><td>200,000</td></tr>
+        </table>`)[0],
+    )!;
+    expect(readRow(balance, ...LINE_ITEMS.totalEquity)[0]).toBe(80000);
+    expect(readRow(balance, ...LINE_ITEMS.totalLiabilities)[0]).toBe(120000);
+    expect(readRow(balance, ...LINE_ITEMS.totalAssets)[0]).toBe(200000);
+  });
+});

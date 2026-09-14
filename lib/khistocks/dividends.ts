@@ -115,7 +115,7 @@ interface ParsedDividends {
 /** Throws when no payout table was recognised, so a failure is never cached. */
 const loadDividends = unstable_cache(
   async (symbol: string): Promise<ParsedDividends> => {
-    const page = await fetchKhistocksPage("dividends", symbol);
+    const page = await fetchKhistocksPage("dividends", symbol, (body) => parseDividendTables(body, symbol).length > 0);
     if (!page.html || !page.url) {
       throw new UpstreamError(summariseAttempts(page.attempts));
     }

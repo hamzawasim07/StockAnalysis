@@ -41,10 +41,28 @@ function variants(path: string): string[] {
   return HOSTS.flatMap((host) => [`${host}${path}`, `${host}/index.php${path}`]);
 }
 
+/**
+ * The financial-highlights page offers a year range (1999 onwards) and separate
+ * balance sheet / income statement / cash flow sections. If it renders a shell
+ * until those are chosen, a bare request returns empty tables — so the plain URL is
+ * tried first and these parameterised forms follow only if it yields nothing.
+ */
+function financialsUrls(symbol: string): string[] {
+  const path = `/company-information/financial-highlights/${symbol}.html`;
+  const thisYear = new Date().getUTCFullYear();
+  return [
+    ...variants(path),
+    `${HOSTS[0]}${path}?from=1999&to=${thisYear}`,
+    `${HOSTS[0]}${path}?year_from=1999&year_to=${thisYear}`,
+    `${HOSTS[0]}${path}?start=1999&end=${thisYear}`,
+    `${HOSTS[0]}${path}?period=annual`,
+  ];
+}
+
 const CANDIDATES: Record<PageKind, (symbol: string) => string[]> = {
-  financials: (symbol) => variants(`/company-information/financial-highlights/${symbol}.html`),
+  financials: financialsUrls,
   // Ratios live on the same financial-highlights page.
-  ratios: (symbol) => variants(`/company-information/financial-highlights/${symbol}.html`),
+  ratios: financialsUrls,
   dividends: () => [
     // One page carries every company's payout history, so it is fetched whole and
     // filtered by symbol during parsing.
@@ -86,7 +104,17 @@ export function looksUseful(body: string) {
   return body.length > 2_000 && /<t(able|body)/i.test(body);
 }
 
-export async function fetchKhistocksPage(kind: PageKind, symbol: string): Promise<PageResult> {
+/**
+ * @param validate decides whether a fetched page actually carries what the caller
+ * needs. Without it, a page of empty table shells counts as "useful" and stops the
+ * search — so a symbol whose first candidate URL returns a JavaScript-rendered
+ * skeleton would never reach the remaining candidates, or discovery, at all.
+ */
+export async function fetchKhistocksPage(
+  kind: PageKind,
+  symbol: string,
+  validate?: (body: string) => boolean,
+): Promise<PageResult> {
   const attempts: PageResult["attempts"] = [];
   const ttl = KHISTOCKS_TTL[kind === "financials" || kind === "ratios" || kind === "profile" ? "financials" : kind];
 
@@ -98,8 +126,15 @@ export async function fetchKhistocksPage(kind: PageKind, symbol: string): Promis
         timeoutMs: 12_000,
         retries: 0,
       });
-      if (looksUseful(html)) return html;
-      attempts.push({ url, error: "response had no tables and no JSON body" });
+      if (!looksUseful(html)) {
+        attempts.push({ url, error: "response had no tables and no JSON body" });
+        return null;
+      }
+      if (validate && !validate(html)) {
+        attempts.push({ url, error: "reached, but carried no usable rows — trying the next candidate" });
+        return null;
+      }
+      return html;
     } catch (error) {
       attempts.push({ url, error: errorMessage(error) });
     }

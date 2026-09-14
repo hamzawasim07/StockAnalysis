@@ -228,7 +228,8 @@ export function assembleFinancials(html: string): AssembledFinancials | null {
  */
 const loadFinancials = unstable_cache(
   async (symbol: string): Promise<ParsedFinancials> => {
-    const page = await fetchKhistocksPage("financials", symbol);
+    // A page only counts if the statements actually parse out of it.
+    const page = await fetchKhistocksPage("financials", symbol, (body) => assembleFinancials(body) !== null);
     if (!page.html || !page.url) {
       throw new UpstreamError(summariseAttempts(page.attempts));
     }

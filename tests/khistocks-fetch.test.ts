@@ -90,3 +90,69 @@ describe("what counts as a usable response", () => {
     expect(looksUseful(`<html><body><table><tr><td>1</td></tr></table>${"x".repeat(3000)}</body></html>`)).toBe(true);
   });
 });
+
+describe("a page that renders empty tables must not stop the search", () => {
+  let requested: string[] = [];
+  const bodies = new Map<string, string>();
+
+  beforeEach(() => {
+    resetCircuitBreakers();
+    requested = [];
+    bodies.clear();
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const key = String(url);
+      requested.push(key);
+      const body = bodies.get(key);
+      if (body === undefined) return new Response("", { status: 404 });
+      return new Response(body, { status: 200 });
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetCircuitBreakers();
+  });
+
+  // Markup present, rows absent — what a client-rendered page looks like to a
+  // server-side fetch. It passes the "is this usable" check but carries nothing.
+  const SHELL = `<html><body><table><thead><tr><th>Particulars</th></tr></thead><tbody></tbody></table>${"x".repeat(2500)}</body></html>`;
+  const REAL = `<html><body><table><tr><th>Particulars</th><th>FY2025</th></tr><tr><td>Net Sales</td><td>38,922</td></tr></table>${"x".repeat(2500)}</body></html>`;
+
+  it("keeps trying candidates when a page has tables but no rows", async () => {
+    bodies.set("https://www.khistocks.com/company-information/financial-highlights/LUCK.html", SHELL);
+    bodies.set("https://khistocks.com/company-information/financial-highlights/LUCK.html", REAL);
+
+    const result = await fetchKhistocksPage("financials", "LUCK", (body) => /Net Sales/.test(body));
+    expect(result.html).toContain("Net Sales");
+    expect(result.url).toBe("https://khistocks.com/company-information/financial-highlights/LUCK.html");
+    // The shell is recorded as an attempt rather than silently accepted.
+    expect(result.attempts.some((attempt) => /no usable rows/.test(attempt.error))).toBe(true);
+  });
+
+  it("falls through to the parameterised URLs when the bare page is a shell", async () => {
+    for (const url of [
+      "https://www.khistocks.com/company-information/financial-highlights/LUCK.html",
+      "https://www.khistocks.com/index.php/company-information/financial-highlights/LUCK.html",
+      "https://khistocks.com/company-information/financial-highlights/LUCK.html",
+      "https://khistocks.com/index.php/company-information/financial-highlights/LUCK.html",
+    ]) {
+      bodies.set(url, SHELL);
+    }
+    const year = new Date().getUTCFullYear();
+    bodies.set(
+      `https://www.khistocks.com/company-information/financial-highlights/LUCK.html?from=1999&to=${year}`,
+      REAL,
+    );
+
+    const result = await fetchKhistocksPage("financials", "LUCK", (body) => /Net Sales/.test(body));
+    expect(result.html).toContain("Net Sales");
+    expect(result.url).toContain("from=1999");
+  });
+
+  it("without a validator, any page with a table still short-circuits", async () => {
+    // Documents why the validator exists: this is the old behaviour.
+    bodies.set("https://www.khistocks.com/company-information/financial-highlights/LUCK.html", SHELL);
+    const result = await fetchKhistocksPage("financials", "LUCK");
+    expect(result.html).toBe(SHELL);
+  });
+});

@@ -174,31 +174,81 @@ export function readRow(grid: StatementGrid, ...candidates: string[]): (number |
 }
 
 /** Row labels used across PSX filings for each normalised line item. */
+/**
+ * Row labels, by normalised line item. Matching is exact-then-substring with the
+ * shortest match winning, so broad terms are safe to include — but each list is
+ * ordered most-specific first anyway.
+ *
+ * khistocks states that it merges and renames account heads to make companies
+ * comparable, so its labels are standardised rather than verbatim from the filings.
+ * Both styles are covered, including the Pakistani conventions: "mark-up" for
+ * interest, "financial charges" for finance cost, "provision for taxation" for tax.
+ */
 export const LINE_ITEMS = {
-  revenue: ["revenue", "net sales", "sales net", "turnover", "sales", "total revenue", "net revenue"],
-  costOfSales: ["cost of sales", "cost of goods sold", "cost of revenue"],
-  grossProfit: ["gross profit", "gross income"],
-  operatingProfit: ["operating profit", "profit from operations", "operating income", "ebit"],
-  financeCost: ["finance cost", "financial charges", "finance charges", "interest expense"],
-  otherIncome: ["other income", "other operating income"],
-  profitBeforeTax: ["profit before tax", "profit before taxation", "pbt"],
-  taxation: ["taxation", "income tax", "tax expense", "provision for taxation"],
-  netProfit: ["profit after tax", "profit for the year", "net profit", "profit after taxation", "pat"],
-  eps: ["earnings per share", "eps", "basic eps"],
+  revenue: [
+    "net sales", "sales revenue", "net revenue", "total revenue", "gross revenue",
+    "net turnover", "turnover", "revenue", "sales",
+  ],
+  costOfSales: ["cost of sales", "cost of goods sold", "cost of revenue", "cost of sale", "cogs"],
+  grossProfit: ["gross profit", "gross income", "gross profit loss"],
+  operatingExpenses: [
+    "operating expenses", "distribution cost", "selling and distribution",
+    "administrative expenses", "admin expenses",
+  ],
+  operatingProfit: [
+    "operating profit", "profit from operations", "profit from operation",
+    "operating income", "operating profit loss", "ebit",
+  ],
+  financeCost: [
+    "finance cost", "financial charges", "finance charges", "financial expenses",
+    "mark up interest expense", "markup expense", "mark up expense", "interest expense", "interest cost",
+  ],
+  otherIncome: ["other income", "other operating income", "non operating income"],
+  profitBeforeTax: [
+    "profit before tax", "profit before taxation", "profit loss before taxation",
+    "profit loss before tax", "pbt",
+  ],
+  taxation: ["provision for taxation", "provision for tax", "income tax", "tax expense", "taxation", "current tax"],
+  netProfit: [
+    "profit after tax", "profit after taxation", "profit loss after taxation",
+    "profit for the year", "profit loss for the year", "net profit", "net income", "pat",
+  ],
+  eps: ["earnings per share", "earning per share", "basic eps", "eps"],
 
   totalAssets: ["total assets"],
-  currentAssets: ["current assets", "total current assets"],
-  nonCurrentAssets: ["non current assets", "fixed assets", "total non current assets"],
+  currentAssets: ["total current assets", "current assets"],
+  nonCurrentAssets: [
+    "total non current assets", "non current assets", "fixed assets", "long term assets",
+    "property plant and equipment",
+  ],
   totalLiabilities: ["total liabilities"],
-  currentLiabilities: ["current liabilities", "total current liabilities"],
-  nonCurrentLiabilities: ["non current liabilities", "long term liabilities"],
-  shareCapital: ["share capital", "issued subscribed and paid up capital", "paid up capital"],
-  reserves: ["reserves", "unappropriated profit", "retained earnings"],
-  totalEquity: ["total equity", "shareholders equity", "equity", "net worth"],
+  currentLiabilities: ["total current liabilities", "current liabilities"],
+  nonCurrentLiabilities: [
+    "total non current liabilities", "non current liabilities", "long term liabilities",
+    "long term debt", "long term financing",
+  ],
+  shareCapital: [
+    "issued subscribed and paid up capital", "paid up capital", "share capital", "ordinary share capital",
+  ],
+  reserves: [
+    "unappropriated profit", "retained earnings", "revenue reserves", "capital reserves",
+    "accumulated profit", "reserves",
+  ],
+  totalEquity: [
+    "total shareholders equity", "shareholders equity", "share holders equity",
+    "total equity", "owners equity", "net worth", "equity",
+  ],
 
-  operating: ["cash flow from operating", "net cash from operating", "operating activities"],
-  investing: ["cash flow from investing", "net cash used in investing", "investing activities"],
-  financing: ["cash flow from financing", "net cash from financing", "financing activities"],
-  netChange: ["net increase decrease in cash", "net change in cash"],
-  closingCash: ["cash and cash equivalents at the end", "closing cash", "cash at end"],
+  operating: [
+    "net cash generated from operating", "cash generated from operations",
+    "cash flow from operating", "net cash from operating", "operating activities",
+  ],
+  investing: [
+    "net cash used in investing", "cash flow from investing", "net cash from investing", "investing activities",
+  ],
+  financing: [
+    "net cash used in financing", "cash flow from financing", "net cash from financing", "financing activities",
+  ],
+  netChange: ["net increase decrease in cash", "net change in cash", "increase decrease in cash"],
+  closingCash: ["cash and cash equivalents at the end", "closing cash", "cash at end", "cash at the end"],
 } as const;
