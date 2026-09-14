@@ -49,7 +49,7 @@ const loadSymbols = unstable_cache(
     list.sort((a, b) => a.symbol.localeCompare(b.symbol));
     return list;
   },
-  ["psx-symbols-v1"],
+  ["psx-symbols-v2"],
   { revalidate: PSX_TTL.symbols, tags: ["psx-symbols"] },
 );
 

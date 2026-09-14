@@ -150,7 +150,7 @@ const crawl = unstable_cache(
 
     return { links: dedupe(links), attempts };
   },
-  ["khistocks-discover-v1"],
+  ["khistocks-discover-v2"],
   { revalidate: 60 * 60 * 24 },
 );
 

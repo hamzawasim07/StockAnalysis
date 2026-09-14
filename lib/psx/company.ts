@@ -134,7 +134,7 @@ const loadCompany = unstable_cache(
     });
     return parseCompanyHtml(symbol, html);
   },
-  ["psx-company-v1"],
+  ["psx-company-v2"],
   { revalidate: PSX_TTL.company },
 );
 

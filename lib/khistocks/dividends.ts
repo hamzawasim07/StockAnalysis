@@ -127,7 +127,7 @@ const loadDividends = unstable_cache(
     }
     return { dividends, endpoint };
   },
-  ["khistocks-dividends-v1"],
+  ["khistocks-dividends-v2"],
   { revalidate: KHISTOCKS_TTL.dividends },
 );
 

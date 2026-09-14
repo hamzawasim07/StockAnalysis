@@ -97,7 +97,7 @@ const loadCompanyInfo = unstable_cache(
     if (!mapped) throw new Error("company info endpoint returned no usable record");
     return mapped;
   },
-  ["khistocks-company-info-v1"],
+  ["khistocks-company-info-v2"],
   { revalidate: 60 * 60 * 24 },
 );
 

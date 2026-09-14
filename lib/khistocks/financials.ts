@@ -245,7 +245,7 @@ const loadFinancials = unstable_cache(
       summary: `${assembled.counts.income} income / ${assembled.counts.balance} balance / ${assembled.counts.cashFlow} cash-flow periods`,
     };
   },
-  ["khistocks-financials-v1"],
+  ["khistocks-financials-v2"],
   { revalidate: KHISTOCKS_TTL.financials },
 );
 

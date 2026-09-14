@@ -120,7 +120,7 @@ const loadBoard = unstable_cache(
     }
     return rows;
   },
-  ["psx-market-watch-v1"],
+  ["psx-market-watch-v2"],
   { revalidate: PSX_TTL.marketWatch, tags: ["psx-market-watch"] },
 );
 

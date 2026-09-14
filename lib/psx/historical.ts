@@ -95,7 +95,7 @@ const loadMonth = unstable_cache(
     });
     return parseHistoricalHtml(html);
   },
-  ["psx-history-month-v1"],
+  ["psx-history-month-v2"],
   { revalidate: PSX_TTL.history },
 );
 

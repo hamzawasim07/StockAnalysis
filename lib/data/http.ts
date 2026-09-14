@@ -29,6 +29,20 @@ export interface FetchOptions {
   noStore?: boolean;
 }
 
+/**
+ * Cache-key version for every `unstable_cache` wrapper in the data layer.
+ *
+ * Vercel's Data Cache survives deployments. Before failures stopped being cached,
+ * a failed fetch was stored under the same key as a real result with a TTL of up to
+ * 24 hours — so a deployment that fixed the fetch would still read the old "this
+ * failed" entry and keep showing sample data, with no way to tell from the outside
+ * that the fix had landed.
+ *
+ * Bump this whenever a change should not inherit cached results from the version
+ * before it. Individual keys embed it, e.g. `psx-symbols-v2`.
+ */
+export const CACHE_VERSION = "v2";
+
 export class UpstreamError extends Error {
   constructor(
     message: string,
