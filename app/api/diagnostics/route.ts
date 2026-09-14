@@ -200,11 +200,11 @@ export async function GET(request: Request) {
   checks.push(...liveJson);
 
   const khistocksUrls = [
+    // The per-company hub, now the first URL every khistocks fetch tries.
+    `https://www.khistocks.com/market-live/companies-live/detailed-view/${symbol}.html`,
     `https://www.khistocks.com/company-information/financial-highlights/${symbol}.html`,
     `https://www.khistocks.com/company-information/company-profile/${symbol}.html`,
     `https://www.khistocks.com/company-information/dividend-data.html`,
-    `https://www.khistocks.com/market-live/companies-live/detailed-view/${symbol}.html`,
-    `https://www.khistocks.com/company/getcompinfo/${symbol}`,
     `https://www.khistocks.com/`,
   ];
 

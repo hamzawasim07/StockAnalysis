@@ -24,11 +24,14 @@ import type { PageKind } from "./discover";
 /**
  * khistocks.com's real URL scheme, confirmed against the site's own indexed pages:
  *
+ *   /market-live/companies-live/detailed-view/{SYMBOL}.html   per-company hub
  *   /company-information/financial-highlights/{SYMBOL}.html   statements
  *   /company-information/company-profile/{SYMBOL}.html        profile
  *   /company-information/dividend-data.html                   payouts (one shared page)
- *   /market-live/companies-live/detailed-view/{SYMBOL}.html   live quote
- *   /company/getcompinfo/{SYMBOL}                             company info endpoint
+ *   /company/getcompinfo/{SYMBOL}                             company info endpoint (JSON)
+ *
+ * The detailed view is the page a reader lands on for a scrip and is tried first
+ * for every kind of data; the section pages follow.
  *
  * The site also serves every page under an `/index.php` prefix and on the apex
  * domain, so both are listed as fallbacks. Link discovery still runs first and
@@ -42,6 +45,15 @@ function variants(path: string): string[] {
 }
 
 /**
+ * The per-company hub. This is the page a reader actually lands on for a scrip, and
+ * it carries the company's figures alongside the live quote — so it is tried first
+ * for every kind of data, ahead of the dedicated section pages.
+ */
+function detailedView(symbol: string): string[] {
+  return variants(`/market-live/companies-live/detailed-view/${symbol}.html`);
+}
+
+/**
  * The financial-highlights page offers a year range (1999 onwards) and separate
  * balance sheet / income statement / cash flow sections. If it renders a shell
  * until those are chosen, a bare request returns empty tables — so the plain URL is
@@ -51,6 +63,7 @@ function financialsUrls(symbol: string): string[] {
   const path = `/company-information/financial-highlights/${symbol}.html`;
   const thisYear = new Date().getUTCFullYear();
   return [
+    ...detailedView(symbol),
     ...variants(path),
     `${HOSTS[0]}${path}?from=1999&to=${thisYear}`,
     `${HOSTS[0]}${path}?year_from=1999&year_to=${thisYear}`,
@@ -61,16 +74,17 @@ function financialsUrls(symbol: string): string[] {
 
 const CANDIDATES: Record<PageKind, (symbol: string) => string[]> = {
   financials: financialsUrls,
-  // Ratios live on the same financial-highlights page.
+  // Ratios live alongside the statements.
   ratios: financialsUrls,
-  dividends: () => [
+  dividends: (symbol) => [
+    ...detailedView(symbol),
     // One page carries every company's payout history, so it is fetched whole and
     // filtered by symbol during parsing.
     ...variants("/company-information/dividend-data.html"),
   ],
   profile: (symbol) => [
+    ...detailedView(symbol),
     ...variants(`/company-information/company-profile/${symbol}.html`),
-    ...variants(`/market-live/companies-live/detailed-view/${symbol}.html`),
     `https://www.khistocks.com/company/getcompinfo/${symbol}`,
   ],
 };

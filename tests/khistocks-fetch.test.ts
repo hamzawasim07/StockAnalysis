@@ -36,10 +36,12 @@ describe("khistocks page fetching", () => {
   it("does not crawl the site when a known URL works", async () => {
     // Crawling first cost several requests before the first real attempt, and the
     // 404s it generated used to trip the circuit breaker and block the real URL.
+    // Several known URLs may be tried before one answers; what must not happen is
+    // falling back to crawling the site's navigation.
     available.add("https://www.khistocks.com/company-information/financial-highlights/LUCK.html");
     await fetchKhistocksPage("financials", "LUCK");
-    expect(requested).toHaveLength(1);
-    expect(requested.some((url) => url === "https://www.khistocks.com/")).toBe(false);
+    expect(requested.some((url) => new URL(url).pathname === "/")).toBe(false);
+    expect(requested.every((url) => url.includes("/LUCK.html"))).toBe(true);
   });
 
   it("still reaches a working URL after several variants 404", async () => {
@@ -154,5 +156,55 @@ describe("a page that renders empty tables must not stop the search", () => {
     bodies.set("https://www.khistocks.com/company-information/financial-highlights/LUCK.html", SHELL);
     const result = await fetchKhistocksPage("financials", "LUCK");
     expect(result.html).toBe(SHELL);
+  });
+});
+
+describe("the per-company detailed view", () => {
+  let requested: string[] = [];
+  const bodies = new Map<string, string>();
+
+  beforeEach(() => {
+    resetCircuitBreakers();
+    requested = [];
+    bodies.clear();
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const key = String(url);
+      requested.push(key);
+      const body = bodies.get(key);
+      if (body === undefined) return new Response("", { status: 404 });
+      return new Response(body, { status: 200 });
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetCircuitBreakers();
+  });
+
+  const DETAILED = "https://www.khistocks.com/market-live/companies-live/detailed-view/LUCK.html";
+  const STATEMENTS = `<html><body><table><tr><th>Particulars</th><th>FY2025</th></tr><tr><td>Net Sales</td><td>38,922</td></tr></table>${"x".repeat(2500)}</body></html>`;
+
+  it("is the first URL tried for financials", async () => {
+    bodies.set(DETAILED, STATEMENTS);
+    const result = await fetchKhistocksPage("financials", "LUCK", (body) => /Net Sales/.test(body));
+    expect(result.url).toBe(DETAILED);
+    expect(requested[0]).toBe(DETAILED);
+  });
+
+  it("is tried first for dividends and for the profile too", async () => {
+    bodies.set(DETAILED, STATEMENTS);
+    for (const kind of ["dividends", "profile"] as const) {
+      requested.length = 0;
+      const result = await fetchKhistocksPage(kind, "LUCK", () => true);
+      expect(result.url).toBe(DETAILED);
+      expect(requested[0]).toBe(DETAILED);
+    }
+  });
+
+  it("still falls through to the section pages when the hub has nothing", async () => {
+    bodies.set("https://www.khistocks.com/company-information/financial-highlights/LUCK.html", STATEMENTS);
+    const result = await fetchKhistocksPage("financials", "LUCK", (body) => /Net Sales/.test(body));
+    expect(result.url).toBe("https://www.khistocks.com/company-information/financial-highlights/LUCK.html");
+    expect(requested[0]).toBe(DETAILED);
   });
 });
