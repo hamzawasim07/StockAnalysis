@@ -60,20 +60,41 @@ export function SourcesPanel({ notes }: { notes: SourceNote[] }) {
 export function SampleDataBanner({ notes, symbol }: { notes: SourceNote[]; symbol?: string }) {
   if (!notes.some((note) => note.source === "sample")) return null;
 
+  // Say what actually went wrong, here, rather than only in a panel further down or
+  // behind an API call. The upstream status is the whole diagnosis: a 403 on every
+  // host means the requests are being refused and no parsing change can help, while
+  // a reached-but-unparsed page is a parser problem.
+  const failures = notes.filter((note) => !note.ok && note.message);
+
   return (
-    <div className="border-[var(--warn)]/35 bg-[var(--warn)]/10 flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm">
-      <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-[var(--warn)]" />
-      <p className="text-muted-foreground">
-        <span className="text-foreground font-medium">Showing sample data.</span> One or more upstream sources
-        could not be reached from this deployment, so parts of this page are generated placeholders — realistic in
-        shape, but not real market figures. The panel at the bottom of the page says which parts;{" "}
+    <div className="border-[var(--warn)]/35 bg-[var(--warn)]/10 space-y-2 rounded-lg border px-4 py-3 text-sm">
+      <div className="flex items-start gap-2.5">
+        <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-[var(--warn)]" />
+        <p className="text-muted-foreground">
+          <span className="text-foreground font-medium">Not real market data.</span> The figures below are
+          generated placeholders because the sources could not be read from this deployment. Every affected
+          section is marked.
+        </p>
+      </div>
+
+      {failures.length > 0 && (
+        <ul className="text-muted-foreground space-y-1 pl-7 text-xs">
+          {failures.map((note, index) => (
+            <li key={`${note.endpoint}-${index}`}>
+              <span className="text-foreground font-mono">{note.endpoint}</span> — {note.message}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="text-muted-foreground pl-7 text-xs">
         <Link
           href={symbol ? `/api/diagnostics?symbol=${symbol}` : "/api/diagnostics"}
           className="text-foreground font-medium underline underline-offset-2"
         >
-          run the diagnostics
+          Full diagnostics
         </Link>{" "}
-        to see the exact request each source made and what came back.
+        — every endpoint tried, with status and response.
       </p>
     </div>
   );
