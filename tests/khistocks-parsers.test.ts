@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { parseTables } from "@/lib/data/html";
 import { deriveRatios } from "@/lib/data/ratios";
-import { parseDividendTables } from "@/lib/khistocks/dividends";
+import { mapCompanyInfo } from "@/lib/khistocks/api";
+import { applyFaceValue, parseDividendTables } from "@/lib/khistocks/dividends";
 import { scoreLinks } from "@/lib/khistocks/discover";
 import { detectUnits, parsePeriodHeader, readRow, toStatementGrid, LINE_ITEMS } from "@/lib/khistocks/parse";
 import { DIVIDENDS_ALL_COMPANIES, DIVIDENDS_PAGE, FINANCIALS_PAGE, INDEX_PAGE } from "./fixtures/khistocks";
@@ -207,5 +208,65 @@ describe("amount rows versus ratio rows", () => {
         </table>`)[0],
     )!;
     expect(readRow(verbose, ...LINE_ITEMS.revenue)[0]).toBe(38922);
+  });
+});
+
+describe("company registry endpoint", () => {
+  const raw = {
+    rowid: 611,
+    ksecode: "LUCK",
+    company_name: "Lucky Cement Limited",
+    address: "Main Indus Highway, Pezu, District Lakki Marwat",
+    website: "www.lucky-cement.com",
+    listing_year: "1994",
+    year_end: "June 30",
+    paidupcapital: "2930000000",
+    paidupvalue: "10",
+    representative_name: "Muhammad Ali Tabba",
+  };
+
+  it("maps the registry record", () => {
+    const company = mapCompanyInfo("LUCK", raw)!;
+    expect(company.name).toBe("Lucky Cement Limited");
+    expect(company.faceValue).toBe(10);
+    expect(company.paidUpCapital).toBe(2_930_000_000);
+    expect(company.listingYear).toBe(1994);
+    expect(company.companyId).toBe("611");
+  });
+
+  it("accepts the record wrapped in an array", () => {
+    expect(mapCompanyInfo("LUCK", [raw])!.name).toBe("Lucky Cement Limited");
+  });
+
+  it("treats a zero or missing face value as not stated", () => {
+    // Falling back to the Rs 10 default is right; reporting a face value of 0
+    // would make every per-share payout zero.
+    expect(mapCompanyInfo("X", { ...raw, paidupvalue: "0" })!.faceValue).toBeNull();
+    expect(mapCompanyInfo("X", { ...raw, paidupvalue: undefined })!.faceValue).toBeNull();
+  });
+
+  it("returns null for an empty payload", () => {
+    expect(mapCompanyInfo("X", [])).toBeNull();
+  });
+});
+
+describe("face value applied to payouts", () => {
+  const dividends = parseDividendTables(DIVIDENDS_PAGE);
+
+  it("leaves Rs 10 scrips untouched", () => {
+    expect(applyFaceValue(dividends, 10)[0].perShare).toBe(dividends[0].perShare);
+    expect(applyFaceValue(dividends, null)[0].perShare).toBe(dividends[0].perShare);
+  });
+
+  it("recomputes rupees per share for a different face value", () => {
+    // 160% of a Rs 5 face value is Rs 8.00, not the Rs 16.00 a Rs 10 assumption gives.
+    const rescaled = applyFaceValue(dividends, 5);
+    expect(dividends[0].percent).toBe(160);
+    expect(rescaled[0].perShare).toBeCloseTo(8);
+  });
+
+  it("leaves rows with no percentage alone", () => {
+    const noPercent = [{ ...dividends[0], percent: null, perShare: 3 }];
+    expect(applyFaceValue(noPercent, 5)[0].perShare).toBe(3);
   });
 });

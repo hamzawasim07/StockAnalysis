@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getKhistocksDividends } from "@/lib/khistocks/dividends";
+import { getKhistocksCompany } from "@/lib/khistocks/api";
+import { applyFaceValue, getKhistocksDividends } from "@/lib/khistocks/dividends";
 import { getFinancials } from "@/lib/khistocks/financials";
 import { getCompanyPage } from "@/lib/psx/company";
 import { getHistory } from "@/lib/psx/historical";
@@ -8,6 +9,7 @@ import { getMarketRow } from "@/lib/psx/market";
 import { quoteFromBars, statsFromBars } from "@/lib/psx/stats";
 import { getSymbolInfo } from "@/lib/psx/symbols";
 import { sampleDividends, SAMPLE_SYMBOL_SET, sampleShares } from "@/lib/data/sample";
+import { note } from "@/lib/data/http";
 import { normalizeSymbol } from "@/lib/utils";
 
 import type { Dividend, HistoryRange, SectionProvenance, SourceId, SourceNote, StockSnapshot } from "./types";
@@ -29,12 +31,13 @@ export async function getStockSnapshot(
 ): Promise<StockSnapshot> {
   const symbol = normalizeSymbol(symbolInput);
 
-  const [info, history, company, financials, khiDividends, boardRow] = await Promise.all([
+  const [info, history, company, financials, khiDividends, khiCompany, boardRow] = await Promise.all([
     getSymbolInfo(symbol),
     getHistory(symbol, range),
     getCompanyPage(symbol),
     getFinancials(symbol),
     getKhistocksDividends(symbol),
+    getKhistocksCompany(symbol),
     getMarketRow(symbol),
   ]);
 
@@ -43,6 +46,12 @@ export async function getStockSnapshot(
     ...company.notes,
     ...financials.notes,
     ...khiDividends.notes,
+    note(
+      "khistocks",
+      "khistocks.com/company/getcompinfo",
+      khiCompany.company !== null,
+      khiCompany.error ?? "registry details, paid-up capital and face value",
+    ),
   ];
 
   const bars = history.data;
@@ -65,7 +74,10 @@ export async function getStockSnapshot(
     : derived;
 
   const profile = company.data.profile;
-  const name = info?.name ?? profile.name;
+  // khistocks' company endpoint carries the registry record, which is more complete
+  // than what the PSX company page exposes.
+  const registry = khiCompany.company;
+  const name = info?.name ?? registry?.name ?? profile.name;
   const sector = info?.sector ?? profile.sector ?? null;
 
   // PSX's company page doesn't always print the share count; the statements do,
@@ -75,8 +87,16 @@ export async function getStockSnapshot(
     latestIncome?.eps != null && latestIncome.eps !== 0 && latestIncome.netProfit != null
       ? latestIncome.netProfit / latestIncome.eps
       : null;
+  // Paid-up capital divided by face value is the share count, when both are known.
+  const sharesFromCapital =
+    registry?.paidUpCapital != null && registry.faceValue
+      ? registry.paidUpCapital / registry.faceValue
+      : null;
   const listedShares =
-    profile.listedShares ?? impliedShares ?? (SAMPLE_SYMBOL_SET.has(symbol) ? sampleShares(symbol) : null);
+    profile.listedShares ??
+    sharesFromCapital ??
+    impliedShares ??
+    (SAMPLE_SYMBOL_SET.has(symbol) ? sampleShares(symbol) : null);
 
   const marketCap =
     profile.marketCap ?? (listedShares != null && quote.price != null ? listedShares * quote.price : null);
@@ -101,12 +121,18 @@ export async function getStockSnapshot(
       isETF: info?.isETF ?? profile.isETF,
       listedShares,
       marketCap,
+      website: profile.website ?? registry?.website ?? null,
+      address: profile.address ?? registry?.address ?? null,
+      ceo: profile.ceo ?? registry?.chiefExecutive ?? null,
     },
     quote: { ...quote, name, sector: sector ?? undefined },
     bars,
     stats: statsFromBars(bars),
     financials: financials.data,
-    dividends: mergeDividends(khiDividends.data, company.data.dividends, symbol, notes),
+    dividends: applyFaceValue(
+      mergeDividends(khiDividends.data, company.data.dividends, symbol, notes),
+      registry?.faceValue ?? null,
+    ),
     provenance,
     notes,
   };

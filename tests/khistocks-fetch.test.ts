@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetCircuitBreakers } from "@/lib/data/http";
-import { fetchKhistocksPage } from "@/lib/khistocks/client";
+import { fetchKhistocksPage, looksUseful } from "@/lib/khistocks/client";
 
 const PAGE = `<html><body><table><tr><th>Particulars</th><th>FY2025</th></tr><tr><td>Net Sales</td><td>1,000</td></tr></table>${"x".repeat(2500)}</body></html>`;
 
@@ -62,5 +62,31 @@ describe("khistocks page fetching", () => {
     expect(result.html).toBeNull();
     expect(result.attempts.length).toBeGreaterThan(0);
     expect(result.attempts.every((attempt) => /404/.test(attempt.error))).toBe(true);
+  });
+});
+
+describe("what counts as a usable response", () => {
+  it("accepts a JSON object body", () => {
+    // khistocks serves its company endpoint as JSON; requiring a <table> threw
+    // every JSON response away, including the one confirmed data API on the site.
+    expect(looksUseful('{"company_name":"Lucky Cement Limited","paidupvalue":"10"}')).toBe(true);
+  });
+
+  it("accepts a JSON array body", () => {
+    expect(looksUseful('[{"company_name":"Lucky Cement Limited"}]')).toBe(true);
+  });
+
+  it("rejects empty JSON", () => {
+    expect(looksUseful("{}")).toBe(false);
+    expect(looksUseful("[]")).toBe(false);
+  });
+
+  it("rejects malformed JSON", () => {
+    expect(looksUseful('{"company_name": ')).toBe(false);
+  });
+
+  it("still requires a table in an HTML body", () => {
+    expect(looksUseful(`<html><body>${"x".repeat(3000)}</body></html>`)).toBe(false);
+    expect(looksUseful(`<html><body><table><tr><td>1</td></tr></table>${"x".repeat(3000)}</body></html>`)).toBe(true);
   });
 });

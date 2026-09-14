@@ -111,6 +111,36 @@ export async function GET(request: Request) {
   });
 
   // khistocks — every candidate URL, since the working pattern is what we're after.
+  // khistocks serves JSON under /company/. getcompinfo is confirmed; the rest are
+  // plausible siblings worth probing, since a working data endpoint would beat
+  // scraping the rendered page entirely.
+  const khistocksJsonUrls = [
+    `https://www.khistocks.com/company/getcompinfo/${symbol}`,
+    `https://www.khistocks.com/company/getfinancials/${symbol}`,
+    `https://www.khistocks.com/company/getfinancialhighlights/${symbol}`,
+    `https://www.khistocks.com/company/getbalancesheet/${symbol}`,
+    `https://www.khistocks.com/company/getincomestatement/${symbol}`,
+    `https://www.khistocks.com/company/getdividend/${symbol}`,
+    `https://www.khistocks.com/company/getpayouts/${symbol}`,
+  ];
+
+  for (const url of khistocksJsonUrls) {
+    await run(`khistocks-api:${url.split("/company/")[1]}`, url, {}, (body) => {
+      const trimmed = body.trimStart();
+      if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+        return { json: false, note: "not a JSON response" };
+      }
+      const parsed: unknown = JSON.parse(body);
+      const record = Array.isArray(parsed) ? parsed[0] : parsed;
+      return {
+        json: true,
+        entries: Array.isArray(parsed) ? parsed.length : 1,
+        // The field names are the whole point: they say what this endpoint serves.
+        fields: record && typeof record === "object" ? Object.keys(record).slice(0, 40) : [],
+      };
+    });
+  }
+
   const khistocksUrls = [
     `https://www.khistocks.com/company-information/financial-highlights/${symbol}.html`,
     `https://www.khistocks.com/company-information/company-profile/${symbol}.html`,

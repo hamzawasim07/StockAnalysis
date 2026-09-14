@@ -64,9 +64,26 @@ export interface PageResult {
   attempts: { url: string; error: string }[];
 }
 
-/** A page that came back as a shell (nav only, no tables) isn't worth parsing. */
-function looksUseful(html: string) {
-  return html.length > 2_000 && /<t(able|body)/i.test(html);
+/**
+ * Is this response worth parsing?
+ *
+ * khistocks serves data both as rendered HTML and as JSON under `/company/`, so
+ * requiring a `<table>` discarded every JSON response outright — including the
+ * company endpoint, which is the one confirmed data API on the site. A short JSON
+ * body is perfectly useful; a short HTML body with no table is not.
+ */
+export function looksUseful(body: string) {
+  const trimmed = body.trimStart();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(body);
+      if (Array.isArray(parsed)) return parsed.length > 0;
+      return parsed !== null && typeof parsed === "object" && Object.keys(parsed).length > 0;
+    } catch {
+      return false;
+    }
+  }
+  return body.length > 2_000 && /<t(able|body)/i.test(body);
 }
 
 export async function fetchKhistocksPage(kind: PageKind, symbol: string): Promise<PageResult> {
@@ -82,7 +99,7 @@ export async function fetchKhistocksPage(kind: PageKind, symbol: string): Promis
         retries: 0,
       });
       if (looksUseful(html)) return html;
-      attempts.push({ url, error: "no tables in response" });
+      attempts.push({ url, error: "response had no tables and no JSON body" });
     } catch (error) {
       attempts.push({ url, error: errorMessage(error) });
     }

@@ -10,7 +10,24 @@ import { normalizeSymbol } from "@/lib/utils";
 
 import { fetchKhistocksPage, KHISTOCKS_TTL, summariseAttempts } from "./client";
 
-const FACE_VALUE = 10;
+import { DEFAULT_FACE_VALUE } from "./api";
+
+const FACE_VALUE = DEFAULT_FACE_VALUE;
+
+/**
+ * Payout percentages are quoted against a scrip's paid-up (face) value. Rs 10 is
+ * the PSX standard and the fallback used while parsing, but it is not universal —
+ * once the real face value is known, rupees-per-share are recomputed from the
+ * percentage rather than left at the Rs 10 assumption.
+ */
+export function applyFaceValue(dividends: Dividend[], faceValue: number | null): Dividend[] {
+  if (!faceValue || faceValue <= 0 || faceValue === FACE_VALUE) return dividends;
+  return dividends.map((dividend) =>
+    dividend.percent == null
+      ? dividend
+      : { ...dividend, perShare: (dividend.percent / 100) * faceValue },
+  );
+}
 
 function classify(text: string): DividendKind {
   if (/bonus/i.test(text)) return "bonus";
