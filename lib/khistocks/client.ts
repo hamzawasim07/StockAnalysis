@@ -71,26 +71,39 @@ function looksUseful(html: string) {
 
 export async function fetchKhistocksPage(kind: PageKind, symbol: string): Promise<PageResult> {
   const attempts: PageResult["attempts"] = [];
+  const ttl = KHISTOCKS_TTL[kind === "financials" || kind === "ratios" || kind === "profile" ? "financials" : kind];
 
-  // Links the site itself published come first — they are the real scheme, whatever
-  // it is. The hard-coded patterns below are only a fallback for when the crawl
-  // finds nothing (site down, markup changed, navigation rendered client-side).
-  const discovered = await discoverUrls(symbol, kind);
-  const candidates = [...new Set([...discovered, ...CANDIDATES[kind](symbol)])];
-
-  for (const url of candidates) {
+  const tryUrl = async (url: string): Promise<string | null> => {
     try {
       const html = await fetchUpstream(url, {
-        revalidate: KHISTOCKS_TTL[kind === "ratios" ? "financials" : kind === "profile" ? "financials" : kind],
+        revalidate: ttl,
         tags: [`khistocks-${symbol}`],
         timeoutMs: 12_000,
         retries: 0,
       });
-      if (looksUseful(html)) return { html, url, attempts };
+      if (looksUseful(html)) return html;
       attempts.push({ url, error: "no tables in response" });
     } catch (error) {
       attempts.push({ url, error: errorMessage(error) });
     }
+    return null;
+  };
+
+  // The known scheme first. Crawling the site to rediscover a URL we already know
+  // costs several requests before the first real attempt — and those speculative
+  // requests are what the discovery step is for when the scheme *has* changed.
+  for (const url of CANDIDATES[kind](symbol)) {
+    const html = await tryUrl(url);
+    if (html) return { html, url, attempts };
+  }
+
+  // Only once every known URL has failed is it worth asking the site where its
+  // pages have moved to.
+  const discovered = await discoverUrls(symbol, kind);
+  for (const url of discovered) {
+    if (attempts.some((attempt) => attempt.url === url)) continue;
+    const html = await tryUrl(url);
+    if (html) return { html, url, attempts };
   }
 
   return { html: null, url: null, attempts };

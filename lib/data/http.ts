@@ -48,6 +48,12 @@ const DEFAULT_TIMEOUT_MS = 15_000;
  * page renders its sample fallback immediately instead of hanging. State is
  * per-instance and in-memory, which is the right scope: it's about not hammering
  * a host from this process, not about correctness.
+ *
+ * Only failures that suggest the *host* is unusable count. A 404 or 403 means the
+ * server answered — the URL was wrong, not the site down — and several of those are
+ * expected, since both adapters probe a handful of URL variants per page. Counting
+ * them would trip the breaker during normal probing and then skip the URL that
+ * actually works.
  */
 const BREAKER_THRESHOLD = 3;
 const BREAKER_COOLDOWN_MS = 60_000;
@@ -73,6 +79,21 @@ function recordFailure(host: string) {
   if (breaker.failures >= BREAKER_THRESHOLD) {
     breaker.openUntil = Date.now() + BREAKER_COOLDOWN_MS;
   }
+}
+
+/** Does this failure say the host itself is unusable, rather than the URL? */
+function indictsHost(error: unknown) {
+  if (error instanceof UpstreamError && error.status) {
+    // 5xx and 429 are the server struggling; other 4xx are answers about the URL.
+    return error.status >= 500 || error.status === 429;
+  }
+  // Connection refused, DNS failure, TLS error, timeout.
+  return true;
+}
+
+/** Test seam: clears breaker state between cases. */
+export function resetCircuitBreakers() {
+  breakers.clear();
 }
 
 function breakerOpen(host: string) {
@@ -145,7 +166,7 @@ export async function fetchUpstream(url: string, options: FetchOptions = {}): Pr
     }
   }
 
-  if (!ignoreBreaker) recordFailure(host);
+  if (!ignoreBreaker && indictsHost(lastError)) recordFailure(host);
   throw lastError instanceof Error ? lastError : new UpstreamError(String(lastError));
 }
 

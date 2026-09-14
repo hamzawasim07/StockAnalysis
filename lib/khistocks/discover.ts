@@ -17,14 +17,15 @@ import { errorMessage, fetchUpstream } from "@/lib/data/http";
 
 export const KHISTOCKS_BASE = "https://www.khistocks.com";
 
-/** Pages likely to link onward to per-company pages. */
+/**
+ * Pages known to exist that link onward to per-company pages. Discovery only runs
+ * after every known URL has already failed, so these are kept few and real —
+ * guessed entry paths would just add 404s to the attempt list.
+ */
 const ENTRY_PAGES = [
   "/",
-  "/companies",
-  "/company-list",
-  "/scrips",
-  "/financial-statements",
-  "/dividend-data",
+  "/company-information/company-profile/{SYMBOL}.html",
+  "/company-information/annual-reports.html",
 ];
 
 export type PageKind = "financials" | "ratios" | "dividends" | "profile";
@@ -111,8 +112,8 @@ const crawl = unstable_cache(
     const links: DiscoveredLink[] = [];
     const attempts: { url: string; error: string }[] = [];
 
-    for (const path of ENTRY_PAGES) {
-      const pageUrl = `${KHISTOCKS_BASE}${path}`;
+    for (const template of ENTRY_PAGES) {
+      const pageUrl = `${KHISTOCKS_BASE}${template.replace("{SYMBOL}", symbol)}`;
       try {
         const html = await fetchUpstream(pageUrl, {
           revalidate: 60 * 60 * 24,
