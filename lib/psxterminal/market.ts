@@ -7,6 +7,8 @@ import { normalizeSymbol } from "@/lib/utils";
 
 import { getFromTerminal, PSXTERMINAL_TTL, type MarketType } from "./client";
 
+export { wsTickToQuote, type WsTick } from "./live";
+
 /** `/api/ticks/{type}/{symbol}` */
 export interface RawTick {
   market?: string;
@@ -72,6 +74,29 @@ const loadTick = unstable_cache(
 
 export async function getTick(symbol: string, market: MarketType = "REG") {
   return loadTick(market, normalizeSymbol(symbol));
+}
+
+/**
+ * Short-lived tick for the polling endpoint behind live price updates.
+ *
+ * The cache here is doing real work: browsers poll every 5s, and without it each
+ * viewer's poll would be its own upstream request against a shared server IP and a
+ * 100-requests-per-minute budget. At a 5s TTL the upstream sees at most twelve
+ * requests a minute per symbol no matter how many people are watching.
+ */
+const loadLiveTick = unstable_cache(
+  async (market: MarketType, symbol: string): Promise<RawTick> =>
+    getFromTerminal<RawTick>(`/api/ticks/${market}/${encodeURIComponent(symbol)}`, {
+      revalidate: 5,
+      tags: [`psxterminal-tick-${symbol}`],
+      timeoutMs: 6_000,
+    }),
+  ["psxterminal-live-tick-v2"],
+  { revalidate: 5 },
+);
+
+export async function getLiveTick(symbol: string, market: MarketType = "REG") {
+  return loadLiveTick(market, normalizeSymbol(symbol));
 }
 
 /** `/api/symbols` returns bare ticker strings — no names or sectors. */

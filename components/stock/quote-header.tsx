@@ -1,12 +1,10 @@
 import Link from "next/link";
 
-import { ChangeBadge } from "@/components/stock/change";
-import { SampleChip } from "@/components/stock/sample-notice";
+import { LivePrice } from "@/components/stock/live-price";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import type { CompanyProfile, PriceStats, Quote, SourceId } from "@/lib/data/types";
-import { formatCompact, formatCompactPKR, formatDate, formatNumber, formatPKR } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { formatCompact, formatCompactPKR, formatNumber } from "@/lib/format";
 
 /** Range bar showing where the last price sits between the period low and high. */
 function RangeBar({ low, high, current }: { low: number | null; high: number | null; current: number | null }) {
@@ -42,7 +40,6 @@ export function QuoteHeader({
   /** Where the price came from. A placeholder price must never look like a real one. */
   priceSource: SourceId;
 }) {
-  const isSample = priceSource === "sample";
   return (
     <Card className="overflow-hidden">
       <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -59,31 +56,7 @@ export function QuoteHeader({
 
           <p className="text-muted-foreground text-sm">{profile.name}</p>
 
-          <div className="flex flex-wrap items-end gap-3">
-            <span
-              className={cn(
-                "tnum text-4xl font-semibold tracking-tight",
-                // Struck through and dimmed: this is the most prominent number on the
-                // page, and an invented one must not read as a quote.
-                isSample && "text-muted-foreground/70 decoration-[var(--warn)]/60 line-through decoration-2",
-              )}
-            >
-              {formatPKR(quote.price)}
-            </span>
-            <ChangeBadge change={quote.change} changePercent={quote.changePercent} className="mb-1.5" />
-            <SampleChip source={priceSource} />
-          </div>
-
-          {isSample ? (
-            <p className="text-[var(--warn)] text-xs font-medium">
-              Not a real price. The PSX data portal could not be reached from this deployment, so this figure and
-              the day&apos;s range below are generated placeholders.
-            </p>
-          ) : (
-            <p className="text-muted-foreground text-xs">
-              Last close {formatDate(quote.asOf)} · end-of-day figures, not a live feed
-            </p>
-          )}
+          <LivePrice symbol={profile.symbol} initial={quote} priceSource={priceSource} />
         </div>
 
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 lg:border-l lg:pl-6">
