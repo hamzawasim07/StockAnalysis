@@ -60,6 +60,35 @@ export async function GET(request: Request) {
     checks.push(check);
   };
 
+  // PSX Terminal first: it is the documented API and the primary source, so its
+  // status is the single most useful line in this report.
+  await run("psxterminal:status", "https://psxterminal.com/api/status", {}, (body) => JSON.parse(body));
+  await run("psxterminal:symbols", "https://psxterminal.com/api/symbols", {}, (body) => {
+    const parsed = JSON.parse(body) as { data?: unknown[] };
+    return { count: Array.isArray(parsed.data) ? parsed.data.length : 0 };
+  });
+  await run(`psxterminal:ticks/${symbol}`, `https://psxterminal.com/api/ticks/REG/${symbol}`, {}, (body) => {
+    const parsed = JSON.parse(body) as { data?: Record<string, unknown> };
+    return { fields: parsed.data ? Object.keys(parsed.data) : [], sample: parsed.data ?? null };
+  });
+  await run(
+    `psxterminal:klines/${symbol}`,
+    `https://psxterminal.com/api/klines/${symbol}/1d?limit=5`,
+    {},
+    (body) => {
+      const parsed = JSON.parse(body) as { data?: unknown[]; count?: number };
+      return { count: parsed.count ?? (Array.isArray(parsed.data) ? parsed.data.length : 0), first: parsed.data?.[0] ?? null };
+    },
+  );
+  await run(`psxterminal:fundamentals/${symbol}`, `https://psxterminal.com/api/fundamentals/${symbol}`, {}, (body) => {
+    const parsed = JSON.parse(body) as { data?: Record<string, unknown> };
+    return { fields: parsed.data ? Object.keys(parsed.data) : [] };
+  });
+  await run(`psxterminal:dividends/${symbol}`, `https://psxterminal.com/api/dividends/${symbol}`, {}, (body) => {
+    const parsed = JSON.parse(body) as { data?: unknown[] };
+    return { count: Array.isArray(parsed.data) ? parsed.data.length : 0 };
+  });
+
   // PSX — run sequentially so one slow endpoint can't starve the others of time.
   await run("psx:symbols", PSX_ENDPOINTS.symbols, {}, (body) => {
     const parsed: unknown = JSON.parse(body);

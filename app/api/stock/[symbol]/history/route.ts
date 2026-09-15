@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { isHistoryRange } from "@/lib/data/types";
-import { getHistory } from "@/lib/psx/historical";
+import { getPrices } from "@/lib/data/sources";
 import { statsFromBars } from "@/lib/psx/stats";
 import { normalizeSymbol } from "@/lib/utils";
 
@@ -21,7 +21,7 @@ export async function GET(request: Request, context: { params: Promise<{ symbol:
     return NextResponse.json({ error: `Unsupported range "${rangeParam}"` }, { status: 400 });
   }
 
-  const { data, notes } = await getHistory(symbol, rangeParam);
+  const { data, notes } = await getPrices(symbol, rangeParam);
   return NextResponse.json({
     symbol,
     range: rangeParam,

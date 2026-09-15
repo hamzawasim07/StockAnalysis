@@ -4,6 +4,7 @@ import { unstable_cache } from "next/cache";
 
 import { parseTables } from "@/lib/data/html";
 import { errorMessage, fetchUpstream, note, UpstreamError } from "@/lib/data/http";
+import { getBreadth, getMarketStats, type RawMover } from "@/lib/psxterminal/market";
 import { sampleBars, SAMPLE_SYMBOLS } from "@/lib/data/sample";
 import type { Sourced } from "@/lib/data/types";
 import { parseLooseNumber } from "@/lib/format";
@@ -153,6 +154,15 @@ export interface MarketMovers {
 }
 
 export async function getMarketMovers(limit = 6): Promise<Sourced<MarketMovers>> {
+  // The documented statistics endpoint already computes breadth and movers; it is
+  // tried first, with the scraped board as the fallback.
+  try {
+    const movers = await terminalMovers(limit);
+    if (movers) return movers;
+  } catch {
+    // Fall through to the board below.
+  }
+
   const { data: rows, notes } = await getMarketBoard();
 
   // Thinly traded scrips produce enormous percentage moves on a handful of shares;
@@ -176,6 +186,44 @@ export async function getMarketMovers(limit = 6): Promise<Sourced<MarketMovers>>
       totalVolume: rows.reduce((sum, row) => sum + (row.volume ?? 0), 0),
     },
     notes,
+  };
+}
+
+/** Breadth and movers straight from `/api/stats`, when it answers. */
+async function terminalMovers(limit: number): Promise<Sourced<MarketMovers> | null> {
+  const [stats, breadth] = await Promise.all([getMarketStats(), getBreadth().catch(() => null)]);
+
+  const toRow = (mover: RawMover): MarketRow => ({
+    symbol: normalizeSymbol(mover.symbol ?? ""),
+    sector: null,
+    ldcp: mover.price != null && mover.change != null ? mover.price - mover.change : null,
+    open: null,
+    high: null,
+    low: null,
+    current: mover.price ?? null,
+    change: mover.change ?? null,
+    // These are already percentages, unlike the tick endpoint's fractions.
+    changePercent: mover.changePercent ?? null,
+    volume: mover.volume ?? null,
+  });
+
+  const gainers = (stats.topGainers ?? []).slice(0, limit).map(toRow);
+  const losers = (stats.topLosers ?? []).slice(0, limit).map(toRow);
+  if (gainers.length === 0 && losers.length === 0) return null;
+
+  return {
+    data: {
+      gainers,
+      losers,
+      // The statistics endpoint ranks by change, not volume; the most-active list
+      // needs the full board, so it is left to the caller's fallback.
+      mostActive: [],
+      advancing: breadth?.advances ?? stats.gainers ?? 0,
+      declining: breadth?.declines ?? stats.losers ?? 0,
+      unchanged: breadth?.unchanged ?? stats.unchanged ?? 0,
+      totalVolume: stats.totalVolume ?? 0,
+    },
+    notes: [note("psxterminal", "psxterminal.com/api/stats", true, `${gainers.length} gainers, ${losers.length} losers`)],
   };
 }
 

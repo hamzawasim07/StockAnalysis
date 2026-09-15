@@ -6,7 +6,7 @@ import { DeltaText } from "@/components/stock/change";
 import { SampleDataBanner } from "@/components/stock/sources-panel";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getMarketBoard } from "@/lib/psx/market";
-import { getSymbols } from "@/lib/psx/symbols";
+import { getDirectory } from "@/lib/data/sources";
 import { formatCompact, formatNumber } from "@/lib/format";
 
 export const revalidate = 300;
@@ -25,7 +25,7 @@ export default async function SectorPage({ params }: PageProps) {
   const { sector } = await params;
   const name = decodeURIComponent(sector);
 
-  const [symbols, board] = await Promise.all([getSymbols(), getMarketBoard()]);
+  const [symbols, board] = await Promise.all([getDirectory(), getMarketBoard()]);
   const members = symbols.data.filter((item) => item.sector === name);
   if (members.length === 0) notFound();
 

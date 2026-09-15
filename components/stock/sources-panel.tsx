@@ -7,6 +7,7 @@ import type { SourceNote } from "@/lib/data/types";
 import { formatDateTime } from "@/lib/format";
 
 const SOURCE_LABEL: Record<SourceNote["source"], string> = {
+  psxterminal: "psxterminal.com",
   psx: "dps.psx.com.pk",
   khistocks: "khistocks.com",
   sample: "bundled sample data",

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { getSectors } from "@/lib/psx/symbols";
+import { getSectorCounts } from "@/lib/data/sources";
 
 export const revalidate = 86400;
 
@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 };
 
 export default async function SectorsPage() {
-  const sectors = await getSectors();
+  const sectors = await getSectorCounts();
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5 px-4 py-8 sm:px-6">

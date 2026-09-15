@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getMarketMovers } from "@/lib/psx/market";
-import { getSectors } from "@/lib/psx/symbols";
+import { getSectorCounts } from "@/lib/data/sources";
 
 // The board moves during the session; re-render the dashboard every five minutes.
 export const revalidate = 300;
@@ -17,7 +17,7 @@ export const revalidate = 300;
 const FEATURED = ["OGDC", "LUCK", "HBL", "ENGRO", "PSO", "MEBL", "SYS", "FFC"];
 
 export default async function DashboardPage() {
-  const [movers, sectors] = await Promise.all([getMarketMovers(6), getSectors()]);
+  const [movers, sectors] = await Promise.all([getMarketMovers(6), getSectorCounts()]);
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6">

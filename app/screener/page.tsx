@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { ScreenerTable } from "@/components/market/screener-table";
 import { SampleDataBanner, SourcesPanel } from "@/components/stock/sources-panel";
 import { getMarketBoard } from "@/lib/psx/market";
-import { getSymbols } from "@/lib/psx/symbols";
+import { getDirectory } from "@/lib/data/sources";
 
 export const revalidate = 300;
 
@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 };
 
 export default async function ScreenerPage() {
-  const [board, symbols] = await Promise.all([getMarketBoard(), getSymbols()]);
+  const [board, symbols] = await Promise.all([getMarketBoard(), getDirectory()]);
 
   // The board doesn't always carry a sector; backfill it from the symbol directory.
   const sectorBySymbol = new Map(symbols.data.map((item) => [item.symbol, item.sector]));

@@ -4,7 +4,7 @@
  * everything above this line works with these types.
  */
 
-export type SourceId = "psx" | "khistocks" | "sample";
+export type SourceId = "psxterminal" | "psx" | "khistocks" | "sample";
 
 export interface SourceNote {
   source: SourceId;

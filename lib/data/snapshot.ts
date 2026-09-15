@@ -4,15 +4,56 @@ import { getKhistocksCompany } from "@/lib/khistocks/api";
 import { applyFaceValue, getKhistocksDividends } from "@/lib/khistocks/dividends";
 import { getFinancials } from "@/lib/khistocks/financials";
 import { getCompanyPage } from "@/lib/psx/company";
-import { getHistory } from "@/lib/psx/historical";
 import { getMarketRow } from "@/lib/psx/market";
+import { getTerminalCompany, getTerminalDividends, getTerminalFundamentals } from "@/lib/psxterminal/company";
+import { getPrices, getQuote } from "@/lib/data/sources";
 import { quoteFromBars, statsFromBars } from "@/lib/psx/stats";
-import { getSymbolInfo } from "@/lib/psx/symbols";
+import { findSymbol } from "@/lib/data/sources";
 import { sampleDividends, SAMPLE_SYMBOL_SET, sampleShares } from "@/lib/data/sample";
-import { note } from "@/lib/data/http";
+import { errorMessage, note } from "@/lib/data/http";
 import { normalizeSymbol } from "@/lib/utils";
 
-import type { Dividend, HistoryRange, SectionProvenance, SourceId, SourceNote, StockSnapshot } from "./types";
+import type {
+  Dividend,
+  HistoryRange,
+  Quote,
+  SectionProvenance,
+  SourceId,
+  SourceNote,
+  StockSnapshot,
+} from "./types";
+
+/**
+ * Company details, fundamentals and payouts from the documented API, gathered
+ * together so one failure doesn't cost the others.
+ */
+async function getTerminalDetails(symbol: string) {
+  const notes: SourceNote[] = [];
+
+  const [company, fundamentals] = await Promise.all([
+    getTerminalCompany(symbol).catch((error) => {
+      notes.push(note("psxterminal", `psxterminal.com/api/companies/${symbol}`, false, errorMessage(error)));
+      return null;
+    }),
+    getTerminalFundamentals(symbol).catch((error) => {
+      notes.push(note("psxterminal", `psxterminal.com/api/fundamentals/${symbol}`, false, errorMessage(error)));
+      return null;
+    }),
+  ]);
+
+  if (company) notes.push(note("psxterminal", `psxterminal.com/api/companies/${symbol}`, true));
+  if (fundamentals) notes.push(note("psxterminal", `psxterminal.com/api/fundamentals/${symbol}`, true));
+
+  const dividends = await getTerminalDividends(symbol).catch((error) => {
+    notes.push(note("psxterminal", `psxterminal.com/api/dividends/${symbol}`, false, errorMessage(error)));
+    return [];
+  });
+  if (dividends.length > 0) {
+    notes.push(note("psxterminal", `psxterminal.com/api/dividends/${symbol}`, true, `${dividends.length} payouts`));
+  }
+
+  return { company, fundamentals, dividends, notes };
+}
 
 /**
  * Assembles one company view out of every source:
@@ -31,18 +72,23 @@ export async function getStockSnapshot(
 ): Promise<StockSnapshot> {
   const symbol = normalizeSymbol(symbolInput);
 
-  const [info, history, company, financials, khiDividends, khiCompany, boardRow] = await Promise.all([
-    getSymbolInfo(symbol),
-    getHistory(symbol, range),
-    getCompanyPage(symbol),
-    getFinancials(symbol),
-    getKhistocksDividends(symbol),
-    getKhistocksCompany(symbol),
-    getMarketRow(symbol),
-  ]);
+  const [info, history, tick, company, financials, khiDividends, khiCompany, terminal, boardRow] =
+    await Promise.all([
+      findSymbol(symbol),
+      getPrices(symbol, range),
+      getQuote(symbol),
+      getCompanyPage(symbol),
+      getFinancials(symbol),
+      getKhistocksDividends(symbol),
+      getKhistocksCompany(symbol),
+      getTerminalDetails(symbol),
+      getMarketRow(symbol),
+    ]);
 
   const notes: SourceNote[] = [
     ...history.notes,
+    ...tick.notes,
+    ...terminal.notes,
     ...company.notes,
     ...financials.notes,
     ...khiDividends.notes,
@@ -55,7 +101,23 @@ export async function getStockSnapshot(
   ];
 
   const bars = history.data;
-  const derived = quoteFromBars(symbol, bars);
+  const fromBars = quoteFromBars(symbol, bars);
+  // A live tick beats a derived one; fall back field by field so a partial tick
+  // still improves on the bars rather than replacing them wholesale.
+  const derived: Quote = tick.data
+    ? {
+        ...fromBars,
+        price: tick.data.price ?? fromBars.price,
+        previousClose: tick.data.previousClose ?? fromBars.previousClose,
+        change: tick.data.change ?? fromBars.change,
+        changePercent: tick.data.changePercent ?? fromBars.changePercent,
+        dayHigh: tick.data.dayHigh ?? fromBars.dayHigh,
+        dayLow: tick.data.dayLow ?? fromBars.dayLow,
+        volume: tick.data.volume ?? fromBars.volume,
+        turnover: tick.data.turnover ?? fromBars.turnover,
+        asOf: tick.data.asOf ?? fromBars.asOf,
+      }
+    : fromBars;
 
   // The market-watch board is fresher than the last historical bar when the
   // market is open, so it wins where it has a value.
@@ -77,7 +139,10 @@ export async function getStockSnapshot(
   // khistocks' company endpoint carries the registry record, which is more complete
   // than what the PSX company page exposes.
   const registry = khiCompany.company;
-  const name = info?.name ?? registry?.name ?? profile.name;
+  // The API's own name is preferred, then the scraped directory, then the registry.
+  const terminalName = terminal.company?.name ?? null;
+  const directoryName = info && info.name !== info.symbol ? info.name : null;
+  const name = terminalName ?? directoryName ?? registry?.name ?? profile.name;
   const sector = info?.sector ?? profile.sector ?? null;
 
   // PSX's company page doesn't always print the share count; the statements do,
@@ -93,13 +158,19 @@ export async function getStockSnapshot(
       ? registry.paidUpCapital / registry.faceValue
       : null;
   const listedShares =
+    terminal.company?.shares ??
     profile.listedShares ??
     sharesFromCapital ??
     impliedShares ??
     (SAMPLE_SYMBOL_SET.has(symbol) ? sampleShares(symbol) : null);
 
+  // Shares × price is unambiguous; the reported figures are only a fallback, since
+  // the two endpoints quote market cap in different units.
   const marketCap =
-    profile.marketCap ?? (listedShares != null && quote.price != null ? listedShares * quote.price : null);
+    (listedShares != null && quote.price != null ? listedShares * quote.price : null) ??
+    terminal.fundamentals?.marketCap ??
+    profile.marketCap ??
+    null;
 
   const sourceOf = (sectionNotes: SourceNote[]): SourceId => {
     const succeeded = sectionNotes.find((item) => item.ok);
@@ -107,10 +178,15 @@ export async function getStockSnapshot(
   };
 
   const provenance: SectionProvenance = {
-    prices: sourceOf(history.notes),
-    profile: sourceOf(company.notes),
+    prices: sourceOf([...history.notes, ...tick.notes]),
+    profile: terminal.company ? "psxterminal" : sourceOf(company.notes),
     financials: sourceOf(financials.notes),
-    dividends: khiDividends.data.length > 0 ? sourceOf(khiDividends.notes) : sourceOf(company.notes),
+    dividends:
+      terminal.dividends.length > 0
+        ? "psxterminal"
+        : khiDividends.data.length > 0
+          ? sourceOf(khiDividends.notes)
+          : sourceOf(company.notes),
   };
 
   return {
@@ -121,18 +197,22 @@ export async function getStockSnapshot(
       isETF: info?.isETF ?? profile.isETF,
       listedShares,
       marketCap,
+      freeFloat: terminal.company?.freeFloat ?? profile.freeFloat ?? null,
       website: profile.website ?? registry?.website ?? null,
       address: profile.address ?? registry?.address ?? null,
-      ceo: profile.ceo ?? registry?.chiefExecutive ?? null,
+      ceo: terminal.company?.chiefExecutive ?? profile.ceo ?? registry?.chiefExecutive ?? null,
     },
     quote: { ...quote, name, sector: sector ?? undefined },
     bars,
     stats: statsFromBars(bars),
     financials: financials.data,
-    dividends: applyFaceValue(
-      mergeDividends(khiDividends.data, company.data.dividends, symbol, notes),
-      registry?.faceValue ?? null,
-    ),
+    dividends:
+      terminal.dividends.length > 0
+        ? terminal.dividends
+        : applyFaceValue(
+            mergeDividends(khiDividends.data, company.data.dividends, symbol, notes),
+            registry?.faceValue ?? null,
+          ),
     provenance,
     notes,
   };
